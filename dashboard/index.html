@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vehicle Market UK — Intelligence Dashboard</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="nav-icon">🚗</span>
+      <span>Vehicle Market UK</span>
+    </div>
+    <div class="nav-links">
+      <a href="#" class="nav-link active" data-section="dashboard">Dashboard</a>
+      <a href="#" class="nav-link" data-section="velocity">Velocity</a>
+      <a href="#" class="nav-link" data-section="gems">Gems</a>
+      <a href="#" class="nav-link" data-section="plate">Plate Lookup</a>
+      <a href="#" class="nav-link" data-section="alerts">Alerts</a>
+      <a href="#" class="nav-link" data-section="listings">Listings</a>
+    </div>
+    <div class="nav-status">
+      <span id="db-status" class="status-badge">Connecting...</span>
+    </div>
+  </nav>
+
+  <main class="main-content">
+
+    <!-- DASHBOARD -->
+    <section id="section-dashboard" class="section active">
+      <h1 class="section-title">Market Overview</h1>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-active">—</div>
+          <div class="stat-label">Active Listings</div>
+        </div>
+        <div class="stat-card highlight">
+          <div class="stat-value" id="stat-new24">—</div>
+          <div class="stat-label">New Today</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-sold7">—</div>
+          <div class="stat-label">Sold This Week</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-avg-dts">—</div>
+          <div class="stat-label">Avg Days to Sell</div>
+        </div>
+        <div class="stat-card alert-card">
+          <div class="stat-value" id="stat-spikes">—</div>
+          <div class="stat-label">Demand Spikes</div>
+        </div>
+        <div class="stat-card gem-card">
+          <div class="stat-value" id="stat-gems">—</div>
+          <div class="stat-label">Gems Available</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 class="card-title">Top Demand — Hot Models</h2>
+          <table class="data-table" id="demand-table">
+            <thead><tr>
+              <th>Make / Model</th>
+              <th>Score</th>
+              <th>Avg Days</th>
+              <th>Active</th>
+              <th>Spike</th>
+            </tr></thead>
+            <tbody id="demand-tbody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Demand Spikes 🔥</h2>
+          <div id="spikes-list" class="spike-list"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Latest Listings</h2>
+        <div id="recent-listings" class="listing-grid"></div>
+      </div>
+
+      <div class="card mt-2">
+        <h2 class="card-title">Scraper Status</h2>
+        <table class="data-table">
+          <thead><tr><th>Source</th><th>Started</th><th>New</th><th>Sold</th><th>Status</th></tr></thead>
+          <tbody id="scraper-tbody"></tbody>
+        </table>
+        <div class="scraper-controls mt-1">
+          <button class="btn btn-primary" onclick="triggerScrape('all')">Run All Scrapers</button>
+          <button class="btn" onclick="triggerScrape('autotrader')">AutoTrader Only</button>
+          <button class="btn" onclick="triggerScrape('carandclassic')">Car &amp; Classic Only</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VELOCITY -->
+    <section id="section-velocity" class="section">
+      <h1 class="section-title">Sales Velocity</h1>
+      <p class="section-desc">How fast are different models selling? Filtered from sold listings.</p>
+
+      <div class="filter-bar card">
+        <input type="text" id="vel-make" placeholder="Make (e.g. BMW)" class="filter-input">
+        <input type="text" id="vel-model" placeholder="Model (e.g. 3 Series)" class="filter-input">
+        <input type="number" id="vel-year-min" placeholder="Year from" class="filter-input filter-short">
+        <input type="number" id="vel-year-max" placeholder="Year to" class="filter-input filter-short">
+        <select id="vel-fuel" class="filter-input">
+          <option value="">All fuels</option>
+          <option>Petrol</option><option>Diesel</option><option>Electric</option><option>Hybrid</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadVelocity()">Search</button>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 class="card-title">Fastest Sellers (≤7 days)</h2>
+          <table class="data-table">
+            <thead><tr>
+              <th>Make / Model</th><th>Yrs</th><th>Avg Days</th><th>% &lt;7d</th><th>Avg £</th><th>n</th>
+            </tr></thead>
+            <tbody id="fast-sellers-tbody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <canvas id="velocity-chart" height="280"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">All Velocity Data</h2>
+        <table class="data-table" id="velocity-table">
+          <thead><tr>
+            <th>Make</th><th>Model</th><th>Years</th><th>Colour</th>
+            <th>Avg Days</th><th>Median Days</th><th>% &lt;7d</th>
+            <th>Avg £</th><th>Samples</th>
+          </tr></thead>
+          <tbody id="velocity-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- GEMS -->
+    <section id="section-gems" class="section">
+      <h1 class="section-title">Gems &amp; Sourcing Opportunities</h1>
+      <p class="section-desc">Underpriced vs market median, fast sellers, under-a-week deals.</p>
+
+      <div class="filter-bar card">
+        <input type="text" id="gem-make" placeholder="Make" class="filter-input">
+        <input type="text" id="gem-model" placeholder="Model" class="filter-input">
+        <input type="number" id="gem-year-min" placeholder="Year from" class="filter-input filter-short">
+        <input type="number" id="gem-year-max" placeholder="Year to" class="filter-input filter-short">
+        <input type="number" id="gem-discount" placeholder="Min discount %" value="15" class="filter-input filter-short">
+        <button class="btn btn-primary" onclick="loadGems()">Find Gems</button>
+      </div>
+
+      <div id="gems-grid" class="gem-grid"></div>
+    </section>
+
+    <!-- PLATE LOOKUP -->
+    <section id="section-plate" class="section">
+      <h1 class="section-title">Plate Lookup</h1>
+      <p class="section-desc">Enter any UK registration to get vehicle details and market desirability score.</p>
+
+      <div class="plate-search card">
+        <div class="plate-input-wrap">
+          <input type="text" id="plate-input" placeholder="e.g. AB12 CDE" class="plate-input" maxlength="8">
+          <button class="btn btn-primary btn-large" onclick="lookupPlate()">Look Up</button>
+        </div>
+      </div>
+
+      <div id="plate-result" class="plate-result hidden"></div>
+    </section>
+
+    <!-- ALERTS -->
+    <section id="section-alerts" class="section">
+      <h1 class="section-title">Price Alerts</h1>
+
+      <div class="card">
+        <h2 class="card-title">Create Alert</h2>
+        <div class="alert-form">
+          <input type="text" id="alert-make" placeholder="Make" class="filter-input">
+          <input type="text" id="alert-model" placeholder="Model" class="filter-input">
+          <input type="number" id="alert-year-min" placeholder="Year from" class="filter-input filter-short">
+          <input type="number" id="alert-year-max" placeholder="Year to" class="filter-input filter-short">
+          <input type="number" id="alert-max-price" placeholder="Max price £" class="filter-input">
+          <input type="number" id="alert-max-mileage" placeholder="Max mileage" class="filter-input">
+          <input type="text" id="alert-colour" placeholder="Colour" class="filter-input filter-short">
+          <input type="email" id="alert-email" placeholder="Email (optional)" class="filter-input">
+          <button class="btn btn-primary" onclick="createAlert()">Save Alert</button>
+        </div>
+      </div>
+
+      <div class="card mt-2">
+        <h2 class="card-title">Active Alerts</h2>
+        <div id="alerts-list"></div>
+      </div>
+
+      <div class="card mt-2">
+        <h2 class="card-title">Current Matches</h2>
+        <button class="btn mb-1" onclick="checkAlerts()">Check All Alerts Now</button>
+        <div id="alert-matches"></div>
+      </div>
+    </section>
+
+    <!-- LISTINGS -->
+    <section id="section-listings" class="section">
+      <h1 class="section-title">Browse Listings</h1>
+
+      <div class="filter-bar card">
+        <input type="text" id="lst-make" placeholder="Make" class="filter-input">
+        <input type="text" id="lst-model" placeholder="Model" class="filter-input">
+        <input type="number" id="lst-year-min" placeholder="Year from" class="filter-input filter-short">
+        <input type="number" id="lst-year-max" placeholder="Year to" class="filter-input filter-short">
+        <input type="number" id="lst-price-max" placeholder="Max price £" class="filter-input">
+        <input type="text" id="lst-colour" placeholder="Colour" class="filter-input filter-short">
+        <select id="lst-source" class="filter-input">
+          <option value="">All sources</option>
+          <option value="autotrader">AutoTrader</option>
+          <option value="carandclassic">Car &amp; Classic</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadListings()">Search</button>
+      </div>
+
+      <div id="listings-grid" class="listing-grid"></div>
+    </section>
+
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

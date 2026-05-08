@@ -1,0 +1,147 @@
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import (
+    Column, String, Integer, Float, DateTime, Boolean, Text, Index,
+    ForeignKey, Enum as SAEnum
+)
+from sqlalchemy.orm import DeclarativeBase, relationship
+import enum
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Source(str, enum.Enum):
+    autotrader = "autotrader"
+    carandclassic = "carandclassic"
+
+
+class Listing(Base):
+    """A car listing — one row per unique listing, updated on each scrape."""
+    __tablename__ = "listings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    listing_id = Column(String(64), nullable=False)          # Source's own ID
+    source = Column(SAEnum(Source), nullable=False)
+    url = Column(String(512), nullable=False)
+
+    # Vehicle attributes
+    make = Column(String(64), index=True)
+    model = Column(String(128), index=True)
+    variant = Column(String(256))                             # Trim/spec
+    year = Column(Integer, index=True)
+    colour = Column(String(64), index=True)
+    mileage = Column(Integer)
+    fuel_type = Column(String(32))
+    transmission = Column(String(32))
+    body_type = Column(String(32))
+    engine_size = Column(Float)                               # Litres
+    doors = Column(Integer)
+    reg_plate = Column(String(16), index=True)
+
+    # Pricing
+    price = Column(Integer)                                   # GBP pence-free, whole £
+    original_price = Column(Integer)                          # First-seen price
+
+    # Location
+    location = Column(String(128))
+    postcode = Column(String(8))
+    latitude = Column(Float)
+    longitude = Column(Float)
+
+    # Lifecycle
+    first_seen = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sold_at = Column(DateTime, nullable=True)
+    days_to_sell = Column(Integer, nullable=True)             # Populated when sold
+    is_active = Column(Boolean, default=True, index=True)
+
+    # Metadata
+    seller_type = Column(String(16))                          # private / dealer
+    images_count = Column(Integer)
+    description = Column(Text)
+
+    price_history = relationship("PriceHistory", back_populates="listing", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_listings_source_id", "source", "listing_id", unique=True),
+        Index("ix_listings_make_model_year", "make", "model", "year"),
+        Index("ix_listings_active_sold", "is_active", "sold_at"),
+    )
+
+    @property
+    def age_days(self) -> Optional[int]:
+        if self.first_seen:
+            return (datetime.utcnow() - self.first_seen).days
+        return None
+
+
+class PriceHistory(Base):
+    """Price changes for a listing over time."""
+    __tablename__ = "price_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
+    price = Column(Integer, nullable=False)
+    recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    listing = relationship("Listing", back_populates="price_history")
+
+
+class DemandSnapshot(Base):
+    """Hourly/daily aggregated demand metrics per make/model/year."""
+    __tablename__ = "demand_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    make = Column(String(64), nullable=False)
+    model = Column(String(128), nullable=False)
+    year_band = Column(String(16))                            # e.g. "2018-2020"
+
+    active_count = Column(Integer, default=0)                 # Listings live right now
+    new_today = Column(Integer, default=0)                    # Listed in last 24h
+    sold_this_week = Column(Integer, default=0)               # Sold in last 7 days
+    avg_days_to_sell = Column(Float)
+    median_price = Column(Integer)
+    avg_price = Column(Integer)
+    price_trend_pct = Column(Float)                          # % change vs last snapshot
+
+    __table_args__ = (
+        Index("ix_demand_make_model_snap", "make", "model", "snapshot_at"),
+    )
+
+
+class PriceAlert(Base):
+    """User-defined price alerts."""
+    __tablename__ = "price_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    make = Column(String(64))
+    model = Column(String(128))
+    year_min = Column(Integer)
+    year_max = Column(Integer)
+    max_price = Column(Integer)
+    max_mileage = Column(Integer)
+    colour = Column(String(64))
+    fuel_type = Column(String(32))
+    email = Column(String(256))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_triggered = Column(DateTime, nullable=True)
+
+
+class ScraperRun(Base):
+    """Log of each scraper execution."""
+    __tablename__ = "scraper_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(SAEnum(Source), nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    listings_found = Column(Integer, default=0)
+    listings_new = Column(Integer, default=0)
+    listings_updated = Column(Integer, default=0)
+    listings_sold = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+    success = Column(Boolean, default=False)
