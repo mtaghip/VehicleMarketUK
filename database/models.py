@@ -145,3 +145,85 @@ class ScraperRun(Base):
     listings_sold = Column(Integer, default=0)
     error = Column(Text, nullable=True)
     success = Column(Boolean, default=False)
+
+
+class MonitoredDealer(Base):
+    """An AutoTrader dealer whose stock we track to detect sold vehicles."""
+    __tablename__ = "monitored_dealers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(256), nullable=False)
+    autotrader_dealer_id = Column(String(64), index=True)   # Numeric ID from AT URL
+    autotrader_url = Column(String(512))                    # Full dealer profile URL
+    location = Column(String(128))
+    postcode = Column(String(8))
+    is_active = Column(Boolean, default=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+    last_scraped = Column(DateTime, nullable=True)
+    total_stock = Column(Integer, default=0)
+
+    stock = relationship("DealerListing", back_populates="dealer", cascade="all, delete-orphan")
+
+
+class DealerListing(Base):
+    """
+    A vehicle in a specific dealer's inventory.
+    When it disappears it is marked sold — giving per-dealer sold intel.
+    """
+    __tablename__ = "dealer_listings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dealer_id = Column(Integer, ForeignKey("monitored_dealers.id"), nullable=False, index=True)
+    listing_id = Column(String(64), nullable=False)         # AutoTrader listing ID
+    url = Column(String(512))
+    title = Column(String(512))
+    reg_plate = Column(String(16))
+    price = Column(Integer)
+    mileage = Column(Integer)
+    year = Column(Integer)
+    make = Column(String(64))
+    model = Column(String(128))
+    colour = Column(String(64))
+    fuel_type = Column(String(32))
+
+    first_seen = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sold_at = Column(DateTime, nullable=True)
+    days_to_sell = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+
+    dealer = relationship("MonitoredDealer", back_populates="stock")
+
+    __table_args__ = (
+        Index("ix_dealer_listing_dealer_id", "dealer_id", "listing_id", unique=True),
+    )
+
+
+class ValuationCache(Base):
+    """Cached AutoTrader retail valuations (reg + mileage → valuation data)."""
+    __tablename__ = "valuation_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    reg = Column(String(16), nullable=False, index=True)
+    mileage = Column(Integer, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Vehicle info from AutoTrader
+    make = Column(String(64))
+    model = Column(String(128))
+    year = Column(Integer)
+    colour = Column(String(64))
+    fuel_type = Column(String(32))
+    transmission = Column(String(32))
+
+    # Valuations
+    retail_price = Column(Integer)
+    trade_price = Column(Integer)
+    retail_rating = Column(Integer)         # AutoTrader score out of 100
+    avg_days_to_sell = Column(Integer)
+    market_condition = Column(String(64))   # e.g. "Lower demand than normal"
+    price_change_pct = Column(Float)        # 30-day trend %
+
+    __table_args__ = (
+        Index("ix_valuation_reg_mileage", "reg", "mileage"),
+    )

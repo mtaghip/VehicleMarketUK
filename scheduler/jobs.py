@@ -41,6 +41,14 @@ async def update_demand_metrics():
     logger.info("Demand snapshots saved.")
 
 
+async def scrape_dealers():
+    logger.info("Scraping monitored dealers...")
+    from scrapers.dealer_monitor import scrape_all_dealers
+    async with AsyncSessionLocal() as session:
+        totals = await scrape_all_dealers(session)
+    logger.info(f"Dealer scrape complete: {totals}")
+
+
 def setup_scheduler():
     interval = settings.scrape_interval_minutes
 
@@ -66,11 +74,21 @@ def setup_scheduler():
 
     scheduler.add_job(
         update_demand_metrics,
-        trigger=CronTrigger(hour="*/6"),    # Every 6 hours
+        trigger=CronTrigger(hour="*/6"),
         id="demand_metrics",
         name="Demand metrics snapshot",
         replace_existing=True,
         max_instances=1,
+    )
+
+    scheduler.add_job(
+        scrape_dealers,
+        trigger=IntervalTrigger(minutes=max(interval, 120), jitter=300),
+        id="scrape_dealers",
+        name="Dealer stock monitor",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=600,
     )
 
     return scheduler

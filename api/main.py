@@ -13,6 +13,7 @@ from scheduler import setup_scheduler
 from api.routes import (
     listings_router, analytics_router,
     plate_router, alerts_router, scraper_router,
+    valuation_router, dealers_router, live_router,
 )
 
 logging.basicConfig(
@@ -53,6 +54,9 @@ app.include_router(analytics_router, prefix="/api")
 app.include_router(plate_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(scraper_router, prefix="/api")
+app.include_router(valuation_router, prefix="/api")
+app.include_router(dealers_router, prefix="/api")
+app.include_router(live_router, prefix="/api")
 
 # Serve dashboard
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"

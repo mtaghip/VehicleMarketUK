@@ -242,3 +242,85 @@ select.filter-input option { background: var(--surface2); }
 
 /* SCRAPER CONTROLS */
 .scraper-controls { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* SECTION HEADER */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+
+/* LIVE DOT */
+.nav-right { display: flex; align-items: center; gap: 8px; }
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--success);
+  box-shadow: 0 0 0 0 rgba(34,197,94,.5);
+}
+.live-dot.pulse { animation: livepulse .6s ease-out; }
+@keyframes livepulse {
+  0% { box-shadow: 0 0 0 0 rgba(34,197,94,.7); }
+  100% { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
+}
+
+/* SCRAPER HEALTH */
+.scraper-health { display: flex; gap: 12px; flex-wrap: wrap; }
+.health-card {
+  flex: 1; min-width: 160px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; position: relative;
+}
+.health-card.ok { border-color: #14532d; }
+.health-card.warn { border-color: #451a03; }
+.health-name { font-weight: 600; font-size: .9rem; }
+.health-time { color: var(--text-muted); font-size: .8rem; margin-top: 2px; }
+.health-stats { font-size: .75rem; color: var(--text-muted); margin-top: 4px; }
+.health-dot {
+  position: absolute; top: 12px; right: 12px;
+  width: 10px; height: 10px; border-radius: 50%;
+}
+.health-dot.green { background: var(--success); }
+.health-dot.red { background: var(--danger); }
+
+/* ACTIVITY FEED */
+.activity-feed { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; }
+.activity-item {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface2); border-radius: 6px; padding: 8px 12px;
+  font-size: .85rem;
+}
+.activity-icon { font-size: 1rem; flex-shrink: 0; }
+.activity-text { flex: 1; }
+.activity-time { color: var(--text-muted); font-size: .75rem; white-space: nowrap; }
+
+/* VALUATION */
+.val-form {}
+.val-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.val-box {
+  background: var(--surface2); border-radius: 8px; padding: 14px;
+  border: 1px solid var(--border);
+}
+.val-box.primary { border-color: var(--primary); }
+.val-label { font-size: .75rem; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; }
+.val-price { font-size: 1.4rem; font-weight: 700; color: var(--text); }
+.val-price.trade { color: var(--text-muted); }
+.refresh-label { display: flex; align-items: center; gap: 6px; font-size: .85rem; white-space: nowrap; }
+
+/* DEALER */
+.dealer-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px;
+}
+.dealer-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px;
+}
+.dealer-name { font-weight: 600; font-size: 1rem; }
+.dealer-meta { font-size: .8rem; color: var(--text-muted); margin-top: 2px; }
+.dealer-stats { display: flex; gap: 12px; font-size: .8rem; color: var(--text-muted); margin-top: 8px; }
+
+/* SOLD card tint */
+.sold-card { border-color: #450a0a !important; }
+.sold-card:hover { border-color: var(--danger) !important; }
+
+.btn-sm { padding: 5px 10px; font-size: .8rem; }
+.btn-danger { background: var(--danger); border-color: var(--danger); color: white; }
+.btn-danger:hover { background: #b91c1c; }
