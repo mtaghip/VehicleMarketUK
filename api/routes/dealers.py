@@ -14,12 +14,12 @@ router = APIRouter(prefix="/dealers", tags=["dealers"])
 
 class DealerCreate(BaseModel):
     name: str
-    autotrader_url: str                 # e.g. https://www.autotrader.co.uk/dealers/.../
+    autotrader_url: str
     location: Optional[str] = None
     postcode: Optional[str] = None
 
 
-# ─── DEALER MANAGEMENT ──────────────────────────────────────────────────────
+# ─── DEALER MANAGEMENT ───────────────────────────────────────────────────────
 
 @router.get("/")
 async def list_dealers(session: AsyncSession = Depends(get_db)):
@@ -27,8 +27,7 @@ async def list_dealers(session: AsyncSession = Depends(get_db)):
         select(MonitoredDealer).where(MonitoredDealer.is_active == True)
         .order_by(MonitoredDealer.name)
     )
-    dealers = result.scalars().all()
-    return [_ser_dealer(d) for d in dealers]
+    return [_ser_dealer(d) for d in result.scalars().all()]
 
 
 @router.post("/", status_code=201)
@@ -36,13 +35,11 @@ async def add_dealer(data: DealerCreate, session: AsyncSession = Depends(get_db)
     """Add a dealer to monitor. Paste their AutoTrader profile URL."""
     import re
     url = data.autotrader_url.rstrip("/")
-    dealer_id_m = re.search(r"-(\d+)$", url)
-    dealer_id = dealer_id_m.group(1) if dealer_id_m else None
-
+    m = re.search(r"-(\d+)$", url)
     dealer = MonitoredDealer(
         name=data.name,
         autotrader_url=url,
-        autotrader_dealer_id=dealer_id,
+        autotrader_dealer_id=m.group(1) if m else None,
         location=data.location,
         postcode=data.postcode,
     )
@@ -52,90 +49,9 @@ async def add_dealer(data: DealerCreate, session: AsyncSession = Depends(get_db)
     return _ser_dealer(dealer)
 
 
-@router.delete("/{dealer_id}")
-async def remove_dealer(dealer_id: int, session: AsyncSession = Depends(get_db)):
-    result = await session.execute(
-        select(MonitoredDealer).where(MonitoredDealer.id == dealer_id)
-    )
-    dealer = result.scalar_one_or_none()
-    if not dealer:
-        raise HTTPException(status_code=404, detail="Dealer not found")
-    dealer.is_active = False
-    await session.commit()
-    return {"deleted": dealer_id}
-
-
-# ─── SCRAPING ────────────────────────────────────────────────────────────────
-
-async def _bg_scrape_dealer(dealer_id: int):
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(MonitoredDealer).where(MonitoredDealer.id == dealer_id)
-        )
-        dealer = result.scalar_one_or_none()
-        if dealer:
-            await scrape_dealer(session, dealer)
-
-
-async def _bg_scrape_all():
-    async with AsyncSessionLocal() as session:
-        await scrape_all_dealers(session)
-
-
-@router.post("/{dealer_id}/scrape")
-async def trigger_dealer_scrape(dealer_id: int, background_tasks: BackgroundTasks):
-    """Trigger an immediate scrape of a single dealer."""
-    background_tasks.add_task(_bg_scrape_dealer, dealer_id)
-    return {"status": "started", "dealer_id": dealer_id}
-
-
-@router.post("/scrape/all")
-async def trigger_all_scrape(background_tasks: BackgroundTasks):
-    """Trigger scrape of all monitored dealers."""
-    background_tasks.add_task(_bg_scrape_all)
-    return {"status": "started"}
-
-
-# ─── STOCK & SOLD DATA ───────────────────────────────────────────────────────
-
-@router.get("/{dealer_id}/stock")
-async def dealer_stock(
-    dealer_id: int,
-    active_only: bool = True,
-    session: AsyncSession = Depends(get_db),
-):
-    """Current live stock for a dealer."""
-    filters = [DealerListing.dealer_id == dealer_id]
-    if active_only:
-        filters.append(DealerListing.is_active == True)
-
-    result = await session.execute(
-        select(DealerListing).where(and_(*filters))
-        .order_by(DealerListing.first_seen.desc())
-    )
-    return [_ser_listing(l) for l in result.scalars().all()]
-
-
-@router.get("/{dealer_id}/sold")
-async def dealer_sold(
-    dealer_id: int,
-    days: int = Query(7, le=90),
-    session: AsyncSession = Depends(get_db),
-):
-    """Vehicles this dealer has sold (removed) in the last N days."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    result = await session.execute(
-        select(DealerListing).where(
-            and_(
-                DealerListing.dealer_id == dealer_id,
-                DealerListing.is_active == False,
-                DealerListing.sold_at.isnot(None),
-                DealerListing.sold_at >= cutoff,
-            )
-        ).order_by(DealerListing.sold_at.desc())
-    )
-    return [_ser_listing(l) for l in result.scalars().all()]
-
+# ─── LITERAL ROUTES MUST BE BEFORE /{dealer_id}/... ─────────────────────────
+# FastAPI matches in definition order; "sold" and "summary" would otherwise
+# be parsed as integer dealer_ids and return 422.
 
 @router.get("/sold/all")
 async def all_dealers_sold(
@@ -168,7 +84,7 @@ async def sold_summary(
     days: int = Query(7, le=90),
     session: AsyncSession = Depends(get_db),
 ):
-    """Per-dealer sold count summary for the last N days — leaderboard view."""
+    """Per-dealer sold count leaderboard for the last N days."""
     cutoff = datetime.utcnow() - timedelta(days=days)
     result = await session.execute(
         select(
@@ -193,7 +109,6 @@ async def sold_summary(
         .group_by(MonitoredDealer.id)
         .order_by(func.count(DealerListing.id).desc())
     )
-    rows = result.all()
     return [
         {
             "dealer_id": r.id,
@@ -205,9 +120,92 @@ async def sold_summary(
             "avg_sold_price": int(r.avg_price) if r.avg_price else None,
             "last_scraped": r.last_scraped.isoformat() if r.last_scraped else None,
         }
-        for r in rows
+        for r in result.all()
     ]
 
+
+@router.post("/scrape/all")
+async def trigger_all_scrape(background_tasks: BackgroundTasks):
+    """Trigger scrape of all monitored dealers."""
+    background_tasks.add_task(_bg_scrape_all)
+    return {"status": "started"}
+
+
+# ─── PER-DEALER ROUTES (parameterised — must be last) ────────────────────────
+
+@router.delete("/{dealer_id}")
+async def remove_dealer(dealer_id: int, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(MonitoredDealer).where(MonitoredDealer.id == dealer_id)
+    )
+    dealer = result.scalar_one_or_none()
+    if not dealer:
+        raise HTTPException(status_code=404, detail="Dealer not found")
+    dealer.is_active = False
+    await session.commit()
+    return {"deleted": dealer_id}
+
+
+@router.post("/{dealer_id}/scrape")
+async def trigger_dealer_scrape(dealer_id: int, background_tasks: BackgroundTasks):
+    background_tasks.add_task(_bg_scrape_dealer, dealer_id)
+    return {"status": "started", "dealer_id": dealer_id}
+
+
+@router.get("/{dealer_id}/stock")
+async def dealer_stock(
+    dealer_id: int,
+    active_only: bool = True,
+    session: AsyncSession = Depends(get_db),
+):
+    filters = [DealerListing.dealer_id == dealer_id]
+    if active_only:
+        filters.append(DealerListing.is_active == True)
+    result = await session.execute(
+        select(DealerListing).where(and_(*filters))
+        .order_by(DealerListing.first_seen.desc())
+    )
+    return [_ser_listing(l) for l in result.scalars().all()]
+
+
+@router.get("/{dealer_id}/sold")
+async def dealer_sold(
+    dealer_id: int,
+    days: int = Query(7, le=90),
+    session: AsyncSession = Depends(get_db),
+):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    result = await session.execute(
+        select(DealerListing).where(
+            and_(
+                DealerListing.dealer_id == dealer_id,
+                DealerListing.is_active == False,
+                DealerListing.sold_at.isnot(None),
+                DealerListing.sold_at >= cutoff,
+            )
+        ).order_by(DealerListing.sold_at.desc())
+    )
+    return [_ser_listing(l) for l in result.scalars().all()]
+
+
+# ─── BACKGROUND TASKS ────────────────────────────────────────────────────────
+
+async def _bg_scrape_dealer(dealer_id: int):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(MonitoredDealer).where(MonitoredDealer.id == dealer_id)
+        )
+        dealer = result.scalar_one_or_none()
+        if dealer:
+            await scrape_dealer(session, dealer)
+
+
+async def _bg_scrape_all():
+    async with AsyncSessionLocal() as session:
+        await scrape_all_dealers(session)
+
+
+# ─── SERIALISERS ─────────────────────────────────────────────────────────────
 
 def _ser_dealer(d: MonitoredDealer) -> dict:
     return {

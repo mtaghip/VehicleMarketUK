@@ -64,6 +64,11 @@ class BaseScraper(ABC):
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
+                "--disable-infobars",
+                "--window-size=1366,768",
+                "--disable-extensions",
+                "--disable-gpu",
+                "--lang=en-GB",
             ],
         )
         return self
@@ -89,7 +94,12 @@ class BaseScraper(ABC):
         # Mask automation signals
         await ctx.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-GB', 'en'] });
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'permissions', {
+                get: () => ({ query: () => Promise.resolve({ state: 'granted' }) })
+            });
         """)
         return ctx
 

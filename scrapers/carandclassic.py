@@ -155,24 +155,47 @@ class CarAndClassicScraper(BaseScraper):
             except Exception:
                 pass
 
+            try:
+                await page.wait_for_selector(
+                    "article, [class*='listing'], [class*='car-card'], [class*='vehicle']",
+                    timeout=8000,
+                )
+            except Exception:
+                pass
+
+            title = await page.title()
             html = await page.content()
             soup = BeautifulSoup(html, "lxml")
 
             cards = soup.select(
                 "article.listing-card, "
+                "article[class*='listing'], "
                 "div.car-listing, "
                 "li.search-result, "
                 "[class*='listing-card'], "
-                "[data-testid='listing-card']"
+                "[class*='ListingCard'], "
+                "[class*='car-card'], "
+                "[data-testid='listing-card'], "
+                "[data-cy*='listing']"
             )
-            logger.info(f"C&C: found {len(cards)} cards on {url}")
+            # Deduplicate
+            seen = set()
+            unique_cards = [c for c in cards if not (id(c) in seen or seen.add(id(c)))]
 
-            for card in cards:
+            logger.info(f"C&C: page title='{title}' — {len(unique_cards)} cards on {url}")
+            if len(unique_cards) == 0:
+                snippet = soup.get_text(separator=" ", strip=True)[:300]
+                logger.warning(f"C&C: 0 cards — page snippet: {snippet}")
+
+            for card in unique_cards:
                 listing = await self._parse_card(card)
                 if listing:
                     listings.append(listing)
 
-            next_btn = soup.select_one("a[aria-label='Next'], a[rel='next'], .pagination-next a")
+            next_btn = soup.select_one(
+                "a[aria-label='Next'], a[rel='next'], "
+                ".pagination-next a, a[aria-label='next page']"
+            )
             has_next = next_btn is not None
 
         except Exception as e:

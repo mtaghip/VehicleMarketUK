@@ -177,36 +177,76 @@ class AutoTraderScraper(BaseScraper):
         listings = []
         has_next = False
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            # Wait for listings to appear, or settle after 5s
+            try:
+                await page.wait_for_selector(
+                    "li.search-page__result, article[data-testid='search-listing-card'], "
+                    "li[data-testid='search-listing'], section.product-card, "
+                    "[class*='listing-card'], [class*='ListingCard']",
+                    timeout=8000,
+                )
+            except Exception:
+                pass
             await asyncio.sleep(2)
 
             # Handle cookie consent
             try:
-                consent_btn = page.locator("button:has-text('Accept all'), button:has-text('Accept All'), #onetrust-accept-btn-handler")
-                if await consent_btn.count() > 0:
-                    await consent_btn.first.click()
-                    await asyncio.sleep(1)
+                for sel in [
+                    "#onetrust-accept-btn-handler",
+                    "button:has-text('Accept all')",
+                    "button:has-text('Accept All')",
+                    "button:has-text('I agree')",
+                ]:
+                    btn = page.locator(sel)
+                    if await btn.count() > 0:
+                        await btn.first.click()
+                        await asyncio.sleep(2)
+                        break
             except Exception:
                 pass
 
+            title = await page.title()
             html = await page.content()
             soup = BeautifulSoup(html, "lxml")
 
+            # Broad set of selectors covering AutoTrader's various layouts
             cards = soup.select(
                 "li.search-page__result, "
                 "article[data-testid='search-listing-card'], "
                 "li[data-testid='search-listing'], "
-                "section.product-card"
+                "section.product-card, "
+                "[class*='listing-card'], "
+                "[class*='ListingCard'], "
+                "[data-testid*='listing']"
             )
-            logger.info(f"AutoTrader: found {len(cards)} cards on {url}")
+            # Deduplicate by id attribute
+            seen = set()
+            unique_cards = []
+            for c in cards:
+                cid = id(c)
+                if cid not in seen:
+                    seen.add(cid)
+                    unique_cards.append(c)
 
-            for card in cards:
+            logger.info(f"AutoTrader: page title='{title}' — {len(unique_cards)} cards on {url}")
+
+            if len(unique_cards) == 0:
+                # Log a snippet to help diagnose bot-block pages
+                body_text = soup.get_text(separator=" ", strip=True)[:300]
+                logger.warning(f"AutoTrader: 0 cards — page snippet: {body_text}")
+
+            for card in unique_cards:
                 listing = await self._parse_listing_card(card)
                 if listing:
                     listings.append(listing)
 
-            # Check for next page
-            next_btn = soup.select_one("a[data-testid='pagination-next'], a.pagination--right__active, a[aria-label='Next page']")
+            next_btn = soup.select_one(
+                "a[data-testid='pagination-next'], "
+                "a.pagination--right__active, "
+                "a[aria-label='Next page'], "
+                "a[aria-label='next']"
+            )
             has_next = next_btn is not None
 
         except Exception as e:
