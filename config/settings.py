@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
     alert_email: str = ""
+    # Dashboard basic auth — set both to enable password protection
+    dashboard_user: str = ""
+    dashboard_password: str = ""
 
     class Config:
         env_file = ".env"
