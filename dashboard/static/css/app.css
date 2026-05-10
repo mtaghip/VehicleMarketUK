@@ -321,6 +321,16 @@ select.filter-input option { background: var(--surface2); }
 .sold-card { border-color: #450a0a !important; }
 .sold-card:hover { border-color: var(--danger) !important; }
 
+/* PERIOD TOGGLE */
+.period-toggle { display: flex; background: var(--surface2); border-radius: 6px; padding: 3px; gap: 2px; }
+.period-btn {
+  padding: 5px 14px; border-radius: 4px; border: none;
+  background: transparent; color: var(--text-muted);
+  cursor: pointer; font-size: .85rem; transition: all .15s;
+}
+.period-btn:hover { color: var(--text); }
+.period-btn.active { background: var(--primary); color: white; }
+
 .btn-sm { padding: 5px 10px; font-size: .8rem; }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: white; }
 .btn-danger:hover { background: #b91c1c; }

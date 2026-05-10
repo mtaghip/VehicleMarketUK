@@ -227,11 +227,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ─── DEALERS ─────────────────────────────────────────────────────────────────
 
+let dealerSoldDays = 7;
+
+function setDealerSoldPeriod(days, btn) {
+  dealerSoldDays = days;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadDealerSoldFeed();
+}
+
+async function loadDealerSoldFeed() {
+  const allSold = await apiFetch(`/dealers/sold/all?days=${dealerSoldDays}`).catch(() => []);
+  renderDealerSoldCars(allSold, 'dealer-sold-grid');
+}
+
 async function loadDealers() {
   const [dealers, leaderboard, allSold] = await Promise.all([
     apiFetch('/dealers/').catch(() => []),
     apiFetch('/dealers/summary/sold?days=7').catch(() => []),
-    apiFetch('/dealers/sold/all?days=7').catch(() => []),
+    apiFetch(`/dealers/sold/all?days=${dealerSoldDays}`).catch(() => []),
   ]);
 
   // Leaderboard

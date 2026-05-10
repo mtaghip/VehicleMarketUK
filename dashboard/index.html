@@ -128,7 +128,14 @@
       </div>
 
       <div class="card">
-        <h2 class="card-title">All Dealer Sold Vehicles (last 7 days)</h2>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+          <h2 class="card-title" style="margin:0">All Dealer Sold Vehicles</h2>
+          <div class="period-toggle">
+            <button class="period-btn active" data-days="7" onclick="setDealerSoldPeriod(7, this)">7 days</button>
+            <button class="period-btn" data-days="30" onclick="setDealerSoldPeriod(30, this)">30 days</button>
+            <button class="period-btn" data-days="90" onclick="setDealerSoldPeriod(90, this)">90 days</button>
+          </div>
+        </div>
         <div id="dealer-sold-grid" class="listing-grid"></div>
       </div>
     </section>
