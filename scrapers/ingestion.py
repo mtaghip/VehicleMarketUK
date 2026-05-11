@@ -54,6 +54,13 @@ async def upsert_listing(session: AsyncSession, raw: RawListing) -> tuple[str, L
             first_seen=raw.scraped_at,
             last_seen=raw.scraped_at,
             is_active=True,
+            owners_count=raw.owners_count,
+            service_history=raw.service_history or None,
+            ulez_compliant=raw.ulez_compliant,
+            euro_standard=raw.euro_standard or None,
+            cat_marker=raw.cat_marker or None,
+            vat_qualifying=raw.vat_qualifying,
+            at_retail_rating=raw.at_retail_rating,
         )
         session.add(listing)
         await session.flush()
@@ -72,9 +79,12 @@ async def upsert_listing(session: AsyncSession, raw: RawListing) -> tuple[str, L
     existing.is_active = True
 
     # Fill in missing fields if we now have them
-    for attr in ("colour", "mileage", "variant", "location", "postcode", "reg_plate"):
-        if getattr(raw, attr) and not getattr(existing, attr):
-            setattr(existing, attr, getattr(raw, attr))
+    for attr in ("colour", "mileage", "variant", "location", "postcode", "reg_plate",
+                 "owners_count", "service_history", "ulez_compliant", "euro_standard",
+                 "cat_marker", "vat_qualifying", "at_retail_rating"):
+        raw_val = getattr(raw, attr, None)
+        if raw_val is not None and raw_val != "" and getattr(existing, attr) is None:
+            setattr(existing, attr, raw_val)
             changed = True
 
     return ("updated" if changed else "unchanged"), existing

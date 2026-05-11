@@ -334,3 +334,70 @@ select.filter-input option { background: var(--surface2); }
 .btn-sm { padding: 5px 10px; font-size: .8rem; }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: white; }
 .btn-danger:hover { background: #b91c1c; }
+
+/* ── DEALERAUCTION-STYLE LISTING CARDS ────────────────────────────────────── */
+.listing-grid {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.da-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  transition: border-color .15s;
+}
+.da-card:hover { border-color: var(--primary); }
+
+.da-card-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; margin-bottom: 8px;
+}
+.da-title {
+  font-weight: 600; font-size: .95rem; color: var(--primary);
+  text-decoration: none; flex: 1;
+}
+.da-title:hover { text-decoration: underline; }
+.da-price { font-size: 1.3rem; font-weight: 700; color: var(--text); white-space: nowrap; }
+
+.da-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+.da-badge {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 2px 8px; font-size: .78rem; color: var(--text);
+}
+.da-badge-plate {
+  font-family: 'Courier New', monospace; font-weight: 700;
+  background: #fef08a; color: #1a1a1a; border-color: #ca8a04;
+}
+
+.da-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+.da-tag {
+  background: transparent; border: 1px solid var(--border);
+  border-radius: 20px; padding: 2px 10px; font-size: .75rem; color: var(--text-muted);
+}
+.da-tag-green { border-color: var(--success); color: var(--success); }
+.da-tag-red { border-color: var(--danger); color: var(--danger); }
+
+.da-card-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--border); padding-top: 9px;
+}
+.da-footer-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.da-rating { display: flex; align-items: center; gap: 6px; }
+.da-rating-label { font-size: .75rem; color: var(--text-muted); }
+.da-rating-val { font-weight: 700; font-size: .9rem; }
+.da-rating-good { color: var(--success); }
+.da-rating-ok { color: var(--warning); }
+.da-rating-poor { color: var(--danger); }
+
+.da-seller-badge { font-size: .78rem; color: var(--text-muted); }
+.da-location { font-size: .78rem; color: var(--text-muted); }
+.da-days { font-size: .75rem; padding: 2px 8px; border-radius: 10px;
+           background: var(--surface2); color: var(--text-muted); }
+.da-days-fast { background: #14532d; color: var(--success); }
+.da-days-stale { background: #451a03; color: var(--warning); }
+
+/* Checkbox filter label */
+.checkbox-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: .85rem; color: var(--text-muted); cursor: pointer; white-space: nowrap;
+}
+.checkbox-label input { cursor: pointer; }

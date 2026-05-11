@@ -45,6 +45,63 @@ def _extract_colour(text: str) -> str:
     return m.group(0).capitalize() if m else ""
 
 
+def _extract_reg_plate(text: str) -> str:
+    """Extract UK registration plate (current or older format)."""
+    m = re.search(r"\b([A-Z]{2}\d{2}\s?[A-Z]{3})\b", text)
+    if m:
+        return m.group(1).replace(" ", "").upper()
+    m = re.search(r"\b([A-Z]\d{1,3}\s?[A-Z]{3})\b", text)
+    return m.group(1).replace(" ", "").upper() if m else ""
+
+
+def _extract_owners(text: str) -> Optional[int]:
+    m = re.search(r"(\d+)\s+previous\s+owner", text, re.I)
+    if m:
+        return int(m.group(1))
+    if re.search(r"\b1\s+owner\b|\bone\s+owner\b|\bonly\s+owner\b", text, re.I):
+        return 1
+    return None
+
+
+def _extract_service_history(text: str) -> str:
+    t = text.lower()
+    if "full service history" in t or "full s/h" in t:
+        return "Full"
+    if "partial service history" in t or "part service history" in t:
+        return "Partial"
+    if "no service history" in t or "no s/h" in t:
+        return "None"
+    return ""
+
+
+def _extract_ulez(text: str) -> Optional[bool]:
+    t = text.lower()
+    if "ulez compliant" in t or "ulez exempt" in t:
+        return True
+    if "non-ulez" in t or "ulez non-compliant" in t or "not ulez" in t:
+        return False
+    return None
+
+
+def _extract_euro_standard(text: str) -> str:
+    m = re.search(r"\beuro\s*(\d+[a-z]?)\b", text, re.I)
+    return f"Euro {m.group(1).upper()}" if m else ""
+
+
+def _extract_cat_marker(text: str) -> str:
+    m = re.search(r"\bcat(?:egory)?\s+([cdsn])\b", text, re.I)
+    return m.group(1).upper() if m else ""
+
+
+def _extract_vat(text: str) -> Optional[bool]:
+    t = text.lower()
+    if "vat qualifying" in t or "inc. vat" in t:
+        return True
+    if "no vat" in t or "vat exempt" in t or "vat n/a" in t:
+        return False
+    return None
+
+
 class AutoTraderScraper(BaseScraper):
     source_name = "autotrader"
 
@@ -169,6 +226,23 @@ class AutoTraderScraper(BaseScraper):
             seller_type = "private" if re.search(r"\bprivate\b", full_text, re.I) else "dealer"
             images_count = len(container.select("img"))
 
+            # Dealer-intelligence fields
+            reg_plate = _extract_reg_plate(full_text)
+            owners_count = _extract_owners(full_text)
+            service_history = _extract_service_history(full_text)
+            ulez_compliant = _extract_ulez(full_text)
+            euro_standard = _extract_euro_standard(full_text)
+            cat_marker = _extract_cat_marker(full_text)
+            vat_qualifying = _extract_vat(full_text)
+
+            # AT Retail Rating (e.g. "97/100" near a rating element)
+            at_retail_rating = None
+            rating_m = re.search(r"\b(\d{1,3})/100\b", full_text)
+            if rating_m:
+                val = int(rating_m.group(1))
+                if 1 <= val <= 100:
+                    at_retail_rating = val
+
             return RawListing(
                 listing_id=listing_id,
                 source="autotrader",
@@ -186,6 +260,14 @@ class AutoTraderScraper(BaseScraper):
                 location=location,
                 seller_type=seller_type,
                 images_count=images_count,
+                reg_plate=reg_plate,
+                owners_count=owners_count,
+                service_history=service_history,
+                ulez_compliant=ulez_compliant,
+                euro_standard=euro_standard,
+                cat_marker=cat_marker,
+                vat_qualifying=vat_qualifying,
+                at_retail_rating=at_retail_rating,
             )
         except Exception as e:
             logger.debug(f"AT parse error: {e}")

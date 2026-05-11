@@ -47,6 +47,14 @@ class RawListing:
     images_count: int = 0
     description: str = ""
     scraped_at: datetime = field(default_factory=datetime.utcnow)
+    # Dealer-intelligence fields
+    owners_count: Optional[int] = None
+    service_history: str = ""          # Full / Partial / None
+    ulez_compliant: Optional[bool] = None
+    euro_standard: str = ""            # Euro 6, Euro 5, etc.
+    cat_marker: str = ""               # S / N / C / D
+    vat_qualifying: Optional[bool] = None
+    at_retail_rating: Optional[int] = None
 
 
 class BaseScraper(ABC):

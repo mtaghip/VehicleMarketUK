@@ -18,7 +18,12 @@ async def list_listings(
     price_max: Optional[int] = None,
     colour: Optional[str] = None,
     fuel_type: Optional[str] = None,
+    transmission: Optional[str] = None,
     source: Optional[str] = None,
+    seller_type: Optional[str] = None,           # private / dealer
+    ulez_only: bool = False,                      # only ULEZ-compliant
+    exclude_cat: bool = False,                    # exclude Cat C/D/S/N write-offs
+    service_history: Optional[str] = None,        # Full / Partial / None
     active_only: bool = True,
     limit: int = Query(50, le=200),
     offset: int = 0,
@@ -43,8 +48,20 @@ async def list_listings(
         filters.append(func.lower(Listing.colour) == colour.lower())
     if fuel_type:
         filters.append(func.lower(Listing.fuel_type) == fuel_type.lower())
+    if transmission:
+        filters.append(func.lower(Listing.transmission) == transmission.lower())
     if source:
         filters.append(Listing.source == source)
+    if seller_type:
+        filters.append(func.lower(Listing.seller_type) == seller_type.lower())
+    if ulez_only:
+        filters.append(Listing.ulez_compliant == True)
+    if exclude_cat:
+        filters.append(
+            (Listing.cat_marker == None) | (Listing.cat_marker == "")
+        )
+    if service_history:
+        filters.append(func.lower(Listing.service_history) == service_history.lower())
 
     result = await session.execute(
         select(Listing)
@@ -53,9 +70,7 @@ async def list_listings(
         .limit(limit)
         .offset(offset)
     )
-    listings = result.scalars().all()
-
-    return [_serialize(l) for l in listings]
+    return [_serialize(l) for l in result.scalars().all()]
 
 
 @router.get("/recent")
@@ -133,10 +148,23 @@ def _serialize(l: Listing) -> dict:
         "mileage": l.mileage,
         "fuel_type": l.fuel_type,
         "transmission": l.transmission,
+        "body_type": l.body_type,
+        "engine_size": l.engine_size,
+        "doors": l.doors,
+        "reg_plate": l.reg_plate,
         "price": l.price,
         "original_price": l.original_price,
         "location": l.location,
         "seller_type": l.seller_type,
+        # Dealer-intelligence fields
+        "owners_count": l.owners_count,
+        "service_history": l.service_history,
+        "ulez_compliant": l.ulez_compliant,
+        "euro_standard": l.euro_standard,
+        "cat_marker": l.cat_marker,
+        "vat_qualifying": l.vat_qualifying,
+        "at_retail_rating": l.at_retail_rating,
+        # Lifecycle
         "first_seen": l.first_seen.isoformat() if l.first_seen else None,
         "last_seen": l.last_seen.isoformat() if l.last_seen else None,
         "sold_at": l.sold_at.isoformat() if l.sold_at else None,

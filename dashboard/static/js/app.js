@@ -577,25 +577,81 @@ async function loadListings() {
   const yearMax = document.getElementById('lst-year-max').value;
   if (yearMin) params.set('year_min', yearMin);
   if (yearMax) params.set('year_max', yearMax);
+  const priceMin = document.getElementById('lst-price-min').value;
   const priceMax = document.getElementById('lst-price-max').value;
+  if (priceMin) params.set('price_min', priceMin);
   if (priceMax) params.set('price_max', priceMax);
   const colour = document.getElementById('lst-colour').value.trim();
   if (colour) params.set('colour', colour);
+  const fuel = document.getElementById('lst-fuel').value;
+  if (fuel) params.set('fuel_type', fuel);
+  const trans = document.getElementById('lst-transmission').value;
+  if (trans) params.set('transmission', trans);
+  const seller = document.getElementById('lst-seller').value;
+  if (seller) params.set('seller_type', seller);
+  const svcHist = document.getElementById('lst-service').value;
+  if (svcHist) params.set('service_history', svcHist);
   const source = document.getElementById('lst-source').value;
   if (source) params.set('source', source);
+  if (document.getElementById('lst-ulez').checked) params.set('ulez_only', 'true');
+  if (document.getElementById('lst-no-cat').checked) params.set('exclude_cat', 'true');
 
   const listings = await apiFetch(`/listings/?${params}`).catch(() => []);
+  const countEl = document.getElementById('listings-count');
+  if (countEl) countEl.textContent = listings.length ? `${listings.length} listings` : '';
   const c = document.getElementById('listings-grid');
   c.innerHTML = listings.length
-    ? listings.map(l => `<div class="listing-card">
-        <a href="${l.url}" target="_blank">
-          <div class="listing-title">${l.year || ''} ${l.make || ''} ${l.model || ''}</div>
-          <div class="listing-price">${fmtPrice(l.price)}</div>
-          <div class="listing-meta">${l.colour ? l.colour+' · ':''} ${l.fuel_type ? l.fuel_type+' · ':''} ${l.mileage ? fmt(l.mileage)+' mi':''}</div>
-          <div style="margin-top:6px">${sourceBadge(l.source)} ${l.days_live != null && l.days_live <= 7 ? '<span class="listing-badge badge-fast">Fast mover</span>':''}</div>
-        </a>
-      </div>`).join('')
+    ? listings.map(l => renderListingCard(l)).join('')
     : '<div class="empty-state">No listings found</div>';
+}
+
+function renderListingCard(l) {
+  const badges = [
+    l.reg_plate ? `<span class="da-badge da-badge-plate">${l.reg_plate}</span>` : '',
+    l.year ? `<span class="da-badge">${l.year}</span>` : '',
+    l.body_type ? `<span class="da-badge">${l.body_type}</span>` : '',
+    l.mileage ? `<span class="da-badge">${fmt(l.mileage)} mi</span>` : '',
+  ].filter(Boolean).join('');
+
+  const tags = [
+    l.transmission ? `<span class="da-tag">${l.transmission}</span>` : '',
+    l.fuel_type ? `<span class="da-tag">${l.fuel_type}</span>` : '',
+    l.colour ? `<span class="da-tag">${l.colour}</span>` : '',
+    l.owners_count != null ? `<span class="da-tag">${l.owners_count} prev owner${l.owners_count !== 1 ? 's' : ''}</span>` : '',
+    l.service_history ? `<span class="da-tag ${l.service_history === 'Full' ? 'da-tag-green' : l.service_history === 'None' ? 'da-tag-red' : ''}">${l.service_history === 'Full' ? 'Full SH' : l.service_history === 'Partial' ? 'Partial SH' : 'No SH'}</span>` : '',
+    l.vat_qualifying === true ? `<span class="da-tag">VAT Qualifying</span>` : '',
+    l.euro_standard ? `<span class="da-tag">${l.euro_standard}</span>` : '',
+    l.cat_marker ? `<span class="da-tag da-tag-red">Cat ${l.cat_marker}</span>` : '',
+    l.ulez_compliant === true ? `<span class="da-tag da-tag-green">ULEZ ✓</span>` : l.ulez_compliant === false ? `<span class="da-tag da-tag-red">Non-ULEZ</span>` : '',
+  ].filter(Boolean).join('');
+
+  const ratingHtml = l.at_retail_rating != null
+    ? `<div class="da-rating"><span class="da-rating-label">AT Rating</span><span class="da-rating-val ${l.at_retail_rating >= 80 ? 'da-rating-good' : l.at_retail_rating >= 50 ? 'da-rating-ok' : 'da-rating-poor'}">${l.at_retail_rating}/100</span></div>`
+    : '';
+
+  const sellerBadge = l.seller_type === 'private'
+    ? '<span class="da-seller-badge">🏠 Private</span>'
+    : '<span class="da-seller-badge">🏢 Dealer</span>';
+
+  const liveDays = l.days_live != null ? `<span class="da-days ${l.days_live <= 7 ? 'da-days-fast' : l.days_live >= 30 ? 'da-days-stale' : ''}">${l.days_live}d listed</span>` : '';
+
+  return `<div class="da-card">
+    <div class="da-card-header">
+      <a href="${l.url}" target="_blank" class="da-title">${l.year || ''} ${l.make || ''} ${l.model || ''} ${l.variant || ''}</a>
+      <div class="da-price">${fmtPrice(l.price)}</div>
+    </div>
+    <div class="da-badges">${badges}</div>
+    <div class="da-tags">${tags}</div>
+    <div class="da-card-footer">
+      ${ratingHtml}
+      <div class="da-footer-right">
+        ${sellerBadge}
+        ${l.location ? `<span class="da-location">📍 ${l.location}</span>` : ''}
+        ${liveDays}
+        ${sourceBadge(l.source)}
+      </div>
+    </div>
+  </div>`;
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────

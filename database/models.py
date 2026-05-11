@@ -62,6 +62,15 @@ class Listing(Base):
     images_count = Column(Integer)
     description = Column(Text)
 
+    # Dealer-intelligence fields (DealerAuction-style)
+    owners_count = Column(Integer)                            # Number of previous owners
+    service_history = Column(String(32))                      # Full / Partial / None
+    ulez_compliant = Column(Boolean)
+    euro_standard = Column(String(8))                         # Euro 6, Euro 5, etc.
+    cat_marker = Column(String(4))                            # S / N / C / D (write-off cat)
+    vat_qualifying = Column(Boolean)
+    at_retail_rating = Column(Integer)                        # AutoTrader score 0-100
+
     price_history = relationship("PriceHistory", back_populates="listing", cascade="all, delete-orphan")
 
     __table_args__ = (

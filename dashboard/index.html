@@ -228,20 +228,49 @@
     <!-- ── LISTINGS ───────────────────────────────────── -->
     <section id="section-listings" class="section">
       <h1 class="section-title">Browse Listings</h1>
-      <div class="filter-bar card">
-        <input type="text" id="lst-make" placeholder="Make" class="filter-input">
-        <input type="text" id="lst-model" placeholder="Model" class="filter-input">
-        <input type="number" id="lst-year-min" placeholder="Year from" class="filter-input filter-short">
-        <input type="number" id="lst-year-max" placeholder="Year to" class="filter-input filter-short">
-        <input type="number" id="lst-price-max" placeholder="Max price £" class="filter-input">
-        <input type="text" id="lst-colour" placeholder="Colour" class="filter-input filter-short">
-        <select id="lst-source" class="filter-input">
-          <option value="">All sources</option>
-          <option value="autotrader">AutoTrader</option>
-          <option value="carandclassic">Car &amp; Classic</option>
-        </select>
-        <button class="btn btn-primary" onclick="loadListings()">Search</button>
+      <div class="card">
+        <div class="filter-bar">
+          <input type="text" id="lst-make" placeholder="Make" class="filter-input">
+          <input type="text" id="lst-model" placeholder="Model" class="filter-input">
+          <input type="number" id="lst-year-min" placeholder="Year from" class="filter-input filter-short">
+          <input type="number" id="lst-year-max" placeholder="Year to" class="filter-input filter-short">
+          <input type="number" id="lst-price-min" placeholder="Min £" class="filter-input filter-short">
+          <input type="number" id="lst-price-max" placeholder="Max £" class="filter-input filter-short">
+          <input type="text" id="lst-colour" placeholder="Colour" class="filter-input filter-short">
+          <select id="lst-fuel" class="filter-input filter-short">
+            <option value="">All fuels</option>
+            <option>Petrol</option><option>Diesel</option>
+            <option>Electric</option><option>Hybrid</option>
+          </select>
+          <select id="lst-transmission" class="filter-input filter-short">
+            <option value="">Any gearbox</option>
+            <option value="Manual">Manual</option>
+            <option value="Automatic">Automatic</option>
+          </select>
+          <select id="lst-seller" class="filter-input filter-short">
+            <option value="">All sellers</option>
+            <option value="private">Private</option>
+            <option value="dealer">Dealer</option>
+          </select>
+          <select id="lst-service" class="filter-input filter-short">
+            <option value="">Any service history</option>
+            <option value="Full">Full SH</option>
+            <option value="Partial">Partial SH</option>
+            <option value="None">No SH</option>
+          </select>
+          <select id="lst-source" class="filter-input">
+            <option value="">All sources</option>
+            <option value="autotrader">AutoTrader</option>
+            <option value="carandclassic">Car &amp; Classic</option>
+          </select>
+        </div>
+        <div class="filter-bar" style="margin-top:8px;gap:16px;align-items:center">
+          <label class="checkbox-label"><input type="checkbox" id="lst-ulez"> ULEZ compliant only</label>
+          <label class="checkbox-label"><input type="checkbox" id="lst-no-cat"> Exclude Cat C/D/S/N</label>
+          <button class="btn btn-primary" onclick="loadListings()">Search</button>
+        </div>
       </div>
+      <div id="listings-count" class="text-muted" style="font-size:.85rem;margin:8px 0"></div>
       <div id="listings-grid" class="listing-grid"></div>
     </section>
 
