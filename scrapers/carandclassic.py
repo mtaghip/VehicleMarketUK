@@ -136,65 +136,181 @@ class CarAndClassicScraper(BaseScraper):
             logger.debug(f"C&C parse error: {e}")
             return None
 
+    async def _parse_card_from_link(self, link_tag) -> Optional[RawListing]:
+        """Link-first parser — walk up from an anchor to collect card data."""
+        try:
+            href = link_tag.get("href", "")
+            url = BASE_URL + href if href.startswith("/") else href
+            slug = re.sub(r"[^a-zA-Z0-9\-]", "", href.rstrip("/").split("/")[-1])[:64]
+            if not slug:
+                return None
+
+            # Walk up to a meaningful container
+            container = link_tag
+            for _ in range(8):
+                p = container.parent
+                if p is None:
+                    break
+                container = p
+                if container.name in ("li", "article", "section", "div") and len(
+                    container.get_text(strip=True)
+                ) > 20:
+                    break
+
+            full_text = container.get_text(separator=" ", strip=True)
+
+            title = ""
+            for h in container.select("h2, h3, h1, [class*='title'], [class*='Title']"):
+                t = h.get_text(strip=True)
+                if len(t) > 5:
+                    title = t
+                    break
+            if not title:
+                title = link_tag.get_text(strip=True)
+
+            year = _parse_year(title) or _parse_year(full_text)
+            parts = [p for p in title.split() if p != str(year)] if year else title.split()
+            make = parts[0] if parts else ""
+            model = parts[1] if len(parts) > 1 else ""
+            variant = " ".join(parts[2:]) if len(parts) > 2 else ""
+
+            price = None
+            for el in container.select("[class*='price'], [class*='Price']"):
+                p = _parse_price(el.get_text())
+                if p and 100 < p < 5_000_000:
+                    price = p
+                    break
+
+            mileage = _parse_mileage(full_text)
+            colour = ""
+            cm = re.search(
+                r"\b(black|white|silver|grey|red|blue|green|yellow|orange|brown|purple|gold)\b",
+                full_text, re.I,
+            )
+            if cm:
+                colour = cm.group(0).capitalize()
+
+            fuel_type = ""
+            for ft in ["Petrol", "Diesel", "Electric", "Hybrid"]:
+                if ft.lower() in full_text.lower():
+                    fuel_type = ft
+                    break
+
+            transmission = ""
+            if re.search(r"\bmanual\b", full_text, re.I):
+                transmission = "Manual"
+            elif re.search(r"\bautomatic\b", full_text, re.I):
+                transmission = "Automatic"
+
+            location_el = container.select_one("[class*='location'], [class*='seller']")
+            location = location_el.get_text(strip=True) if location_el else ""
+
+            if not (make or price):
+                return None
+
+            return RawListing(
+                listing_id=slug,
+                source="carandclassic",
+                url=url,
+                make=make,
+                model=model,
+                variant=variant,
+                year=year,
+                colour=colour,
+                mileage=mileage,
+                fuel_type=fuel_type,
+                transmission=transmission,
+                price=price,
+                location=location,
+                seller_type="private",
+            )
+        except Exception as e:
+            logger.debug(f"C&C link parse error: {e}")
+            return None
+
     async def _scrape_page(self, ctx, url: str) -> tuple[list[RawListing], bool]:
         page = await ctx.new_page()
         listings = []
         has_next = False
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(2)
+            # networkidle waits for the JS SPA to finish rendering listings
+            await page.goto(url, wait_until="networkidle", timeout=45000)
 
             # Cookie consent
             try:
-                for selector in ["button:has-text('Accept all')", "button:has-text('Accept All')", "#accept-cookies"]:
+                for selector in [
+                    "button:has-text('Accept all')",
+                    "button:has-text('Accept All')",
+                    "button:has-text('I Accept')",
+                    "#accept-cookies",
+                    "[id*='cookie'] button",
+                ]:
                     btn = page.locator(selector)
                     if await btn.count() > 0:
                         await btn.first.click()
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
                         break
             except Exception:
                 pass
 
+            # Wait for listing content or settle
             try:
                 await page.wait_for_selector(
-                    "article, [class*='listing'], [class*='car-card'], [class*='vehicle']",
-                    timeout=8000,
+                    "article, [class*='listing'], [class*='vehicle'], [class*='car-card']",
+                    timeout=10000,
                 )
             except Exception:
                 pass
+
+            # Scroll to trigger any lazy-loaded content
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+            await asyncio.sleep(2)
 
             title = await page.title()
             html = await page.content()
             soup = BeautifulSoup(html, "lxml")
 
-            cards = soup.select(
-                "article.listing-card, "
-                "article[class*='listing'], "
-                "div.car-listing, "
-                "li.search-result, "
-                "[class*='listing-card'], "
-                "[class*='ListingCard'], "
-                "[class*='car-card'], "
-                "[data-testid='listing-card'], "
-                "[data-cy*='listing']"
-            )
-            # Deduplicate
-            seen = set()
-            unique_cards = [c for c in cards if not (id(c) in seen or seen.add(id(c)))]
+            # Link-first: find all car detail links, deduplicate by slug
+            all_links = soup.select("a[href*='/car/'], a[href*='/listing/'], a[href*='/classic-cars/']")
+            # Also try any link that leads to a detail page (contains slug pattern)
+            if not all_links:
+                all_links = soup.select("a[href]")
+                all_links = [
+                    l for l in all_links
+                    if re.search(r"/[a-z0-9\-]+/\d+", l.get("href", ""))
+                    and "search" not in l.get("href", "")
+                ]
 
-            logger.info(f"C&C: page title='{title}' — {len(unique_cards)} cards on {url}")
-            if len(unique_cards) == 0:
-                snippet = soup.get_text(separator=" ", strip=True)[:300]
-                logger.warning(f"C&C: 0 cards — page snippet: {snippet}")
-
-            for card in unique_cards:
-                listing = await self._parse_card(card)
+            seen_slugs: set[str] = set()
+            for link in all_links:
+                href = link.get("href", "")
+                slug = href.rstrip("/").split("/")[-1]
+                if not slug or slug in seen_slugs:
+                    continue
+                seen_slugs.add(slug)
+                listing = await self._parse_card_from_link(link)
                 if listing:
                     listings.append(listing)
 
+            # Fallback: container-based approach
+            if not listings:
+                cards = soup.select(
+                    "article, [class*='listing-card'], [class*='ListingCard'], "
+                    "[class*='car-card'], [data-testid='listing-card']"
+                )
+                for card in cards:
+                    listing = await self._parse_card(card)
+                    if listing:
+                        listings.append(listing)
+
+            logger.info(f"C&C: '{title}' — {len(listings)} listings on {url}")
+            if not listings:
+                snippet = soup.get_text(separator=" ", strip=True)[:300]
+                logger.warning(f"C&C: 0 listings — snippet: {snippet}")
+
             next_btn = soup.select_one(
                 "a[aria-label='Next'], a[rel='next'], "
-                ".pagination-next a, a[aria-label='next page']"
+                "[class*='pagination'] a[href*='page='], a[aria-label='next page']"
             )
             has_next = next_btn is not None
 

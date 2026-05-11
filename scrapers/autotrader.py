@@ -3,9 +3,9 @@ import asyncio
 import re
 import logging
 from typing import AsyncGenerator, Optional
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from .base import BaseScraper, RawListing
 
 logger = logging.getLogger(__name__)
@@ -22,12 +22,8 @@ def _parse_price(text: str) -> Optional[int]:
 
 
 def _parse_mileage(text: str) -> Optional[int]:
-    if not text:
-        return None
     m = re.search(r"([\d,]+)\s*miles?", text, re.I)
-    if m:
-        return int(m.group(1).replace(",", ""))
-    return None
+    return int(m.group(1).replace(",", "")) if m else None
 
 
 def _parse_year(text: str) -> Optional[int]:
@@ -38,6 +34,15 @@ def _parse_year(text: str) -> Optional[int]:
 def _parse_engine(text: str) -> Optional[float]:
     m = re.search(r"(\d+\.\d+|\d+)\s*[Ll]", text or "")
     return float(m.group(1)) if m else None
+
+
+def _extract_colour(text: str) -> str:
+    m = re.search(
+        r"\b(black|white|silver|grey|gray|red|blue|green|yellow|orange|brown|"
+        r"purple|gold|bronze|pink|cream|burgundy|navy|maroon|beige)\b",
+        text, re.I,
+    )
+    return m.group(0).capitalize() if m else ""
 
 
 class AutoTraderScraper(BaseScraper):
@@ -72,47 +77,72 @@ class AutoTraderScraper(BaseScraper):
             params["price-to"] = price_max
         return f"{SEARCH_URL}?{urlencode(params)}"
 
-    async def _parse_listing_card(self, card) -> Optional[RawListing]:
+    def _parse_listing_from_link(self, link_tag: Tag) -> Optional[RawListing]:
+        """
+        Build a RawListing starting from a known /car-details/ anchor,
+        then walking up to collect the surrounding card's data.
+        This is more robust than trying to guess the card container selector.
+        """
         try:
-            # Extract listing URL and ID
-            link = card.select_one("a[href*='/car-details/']")
-            if not link:
+            href = link_tag.get("href", "")
+            url = BASE_URL + href if href.startswith("/") else href
+            m = re.search(r"/car-details/(\d+)", url)
+            if not m:
                 return None
-            url = BASE_URL + link["href"] if link["href"].startswith("/") else link["href"]
-            listing_id_match = re.search(r"/car-details/(\d+)", url)
-            if not listing_id_match:
-                return None
-            listing_id = listing_id_match.group(1)
+            listing_id = m.group(1)
 
-            # Title — "2019 BMW 3 Series 320d M Sport"
-            title_el = card.select_one("h3[data-testid='search-listing-title'], h2.listing-title, .product-card-details__title")
-            title = title_el.get_text(strip=True) if title_el else ""
+            # Walk up to the nearest meaningful container (li, article, section)
+            container: Tag = link_tag
+            for _ in range(8):
+                p = container.parent
+                if p is None:
+                    break
+                container = p
+                if container.name in ("li", "article", "section"):
+                    break
 
-            year = _parse_year(title)
+            full_text = container.get_text(separator=" ", strip=True)
+
+            # Title — prefer heading elements inside the container
+            title = ""
+            for heading in container.select("h2, h3, h1, [class*='title'], [class*='Title']"):
+                t = heading.get_text(strip=True)
+                if len(t) > 5:
+                    title = t
+                    break
+            if not title:
+                title = link_tag.get_text(strip=True)
+
+            year = _parse_year(title) or _parse_year(full_text)
+
+            # Make / model from title
             parts = title.split()
-            make = ""
-            model = ""
-            variant = ""
-            if year and len(parts) >= 3:
-                # Remove year token
-                year_str = str(year)
-                remaining = [p for p in parts if p != year_str]
-                if remaining:
-                    make = remaining[0]
-                if len(remaining) > 1:
-                    model = remaining[1]
-                if len(remaining) > 2:
-                    variant = " ".join(remaining[2:])
+            make = model = variant = ""
+            if year:
+                parts = [p for p in parts if p != str(year)]
+            if parts:
+                make = parts[0]
+            if len(parts) > 1:
+                model = parts[1]
+            if len(parts) > 2:
+                variant = " ".join(parts[2:])
 
             # Price
-            price_el = card.select_one("[data-testid='search-listing-price'], .product-card-pricing__price")
-            price = _parse_price(price_el.get_text(strip=True) if price_el else "")
+            price = None
+            for price_el in container.select(
+                "[data-testid*='price'], [class*='price'], [class*='Price']"
+            ):
+                p = _parse_price(price_el.get_text())
+                if p and 200 < p < 2_000_000:
+                    price = p
+                    break
 
-            # Key specs: year, mileage, engine, transmission, fuel
+            # Specs text from list items
             specs_text = " ".join(
                 el.get_text(strip=True)
-                for el in card.select(".product-card-details__spec-item, [data-testid='search-listing-specs'] li")
-            )
+                for el in container.select("li, [class*='spec'], [class*='Spec']")
+            ) or full_text
+
             mileage = _parse_mileage(specs_text)
             engine_size = _parse_engine(specs_text)
 
@@ -123,32 +153,21 @@ class AutoTraderScraper(BaseScraper):
                 transmission = "Automatic"
 
             fuel_type = ""
-            for ft in ["Petrol", "Diesel", "Electric", "Hybrid", "Plug-in Hybrid"]:
+            for ft in ["Plug-in Hybrid", "Hybrid", "Electric", "Diesel", "Petrol"]:
                 if ft.lower() in specs_text.lower():
                     fuel_type = ft
                     break
 
-            # Location
-            location_el = card.select_one(".product-card-seller-info__name, [data-testid='search-listing-seller']")
+            colour = _extract_colour(full_text)
+
+            location_el = container.select_one(
+                "[class*='location'], [class*='Location'], "
+                "[class*='seller'], [class*='Seller'], [data-testid*='seller']"
+            )
             location = location_el.get_text(strip=True) if location_el else ""
 
-            # Colour (often in specs or title)
-            colour = ""
-            colour_match = re.search(
-                r"\b(black|white|silver|grey|gray|red|blue|green|yellow|orange|brown|purple|gold|bronze|pink|cream|burgundy|navy|maroon|beige)\b",
-                title + " " + specs_text,
-                re.I,
-            )
-            if colour_match:
-                colour = colour_match.group(0).capitalize()
-
-            # Seller type
-            seller_el = card.select_one(".product-card-seller-info__private-badge, [data-testid='seller-type']")
-            seller_type = "private" if seller_el and "private" in seller_el.get_text(strip=True).lower() else "dealer"
-
-            # Images
-            img_els = card.select("img[src*='images.autotrader']")
-            images_count = len(img_els)
+            seller_type = "private" if re.search(r"\bprivate\b", full_text, re.I) else "dealer"
+            images_count = len(container.select("img"))
 
             return RawListing(
                 listing_id=listing_id,
@@ -169,7 +188,7 @@ class AutoTraderScraper(BaseScraper):
                 images_count=images_count,
             )
         except Exception as e:
-            logger.debug(f"Error parsing card: {e}")
+            logger.debug(f"AT parse error: {e}")
             return None
 
     async def _scrape_page(self, ctx, url: str) -> tuple[list[RawListing], bool]:
@@ -178,72 +197,56 @@ class AutoTraderScraper(BaseScraper):
         has_next = False
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            # Wait for listings to appear, or settle after 5s
-            try:
-                await page.wait_for_selector(
-                    "li.search-page__result, article[data-testid='search-listing-card'], "
-                    "li[data-testid='search-listing'], section.product-card, "
-                    "[class*='listing-card'], [class*='ListingCard']",
-                    timeout=8000,
-                )
-            except Exception:
-                pass
-            await asyncio.sleep(2)
 
-            # Handle cookie consent
+            # Accept cookies first
             try:
                 for sel in [
                     "#onetrust-accept-btn-handler",
                     "button:has-text('Accept all')",
                     "button:has-text('Accept All')",
-                    "button:has-text('I agree')",
                 ]:
                     btn = page.locator(sel)
                     if await btn.count() > 0:
                         await btn.first.click()
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(1)
                         break
             except Exception:
                 pass
+
+            # Wait for at least one car-details link to appear
+            try:
+                await page.wait_for_selector("a[href*='/car-details/']", timeout=10000)
+            except Exception:
+                pass
+            await asyncio.sleep(1)
 
             title = await page.title()
             html = await page.content()
             soup = BeautifulSoup(html, "lxml")
 
-            # Broad set of selectors covering AutoTrader's various layouts
-            cards = soup.select(
-                "li.search-page__result, "
-                "article[data-testid='search-listing-card'], "
-                "li[data-testid='search-listing'], "
-                "section.product-card, "
-                "[class*='listing-card'], "
-                "[class*='ListingCard'], "
-                "[data-testid*='listing']"
+            # Link-first approach: find every /car-details/ anchor, deduplicate by listing ID
+            all_links = soup.select("a[href*='/car-details/']")
+            seen_ids: set[str] = set()
+            for link in all_links:
+                href = link.get("href", "")
+                m = re.search(r"/car-details/(\d+)", href)
+                if not m:
+                    continue
+                lid = m.group(1)
+                if lid in seen_ids:
+                    continue
+                seen_ids.add(lid)
+                raw = self._parse_listing_from_link(link)
+                if raw:
+                    listings.append(raw)
+
+            logger.info(
+                f"AutoTrader: '{title}' — {len(all_links)} links → "
+                f"{len(listings)} valid listings on {url}"
             )
-            # Deduplicate by id attribute
-            seen = set()
-            unique_cards = []
-            for c in cards:
-                cid = id(c)
-                if cid not in seen:
-                    seen.add(cid)
-                    unique_cards.append(c)
-
-            logger.info(f"AutoTrader: page title='{title}' — {len(unique_cards)} cards on {url}")
-
-            if len(unique_cards) == 0:
-                # Log a snippet to help diagnose bot-block pages
-                body_text = soup.get_text(separator=" ", strip=True)[:300]
-                logger.warning(f"AutoTrader: 0 cards — page snippet: {body_text}")
-
-            for card in unique_cards:
-                listing = await self._parse_listing_card(card)
-                if listing:
-                    listings.append(listing)
 
             next_btn = soup.select_one(
                 "a[data-testid='pagination-next'], "
-                "a.pagination--right__active, "
                 "a[aria-label='Next page'], "
                 "a[aria-label='next']"
             )
