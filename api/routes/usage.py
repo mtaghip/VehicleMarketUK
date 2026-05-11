@@ -1,4 +1,5 @@
 """Database usage / data-presence verification endpoint."""
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -61,9 +62,19 @@ async def usage(session: AsyncSession = Depends(get_db)):
     db_path = DATA_DIR / "vehiclemarket.db"
     db_size_mb = round(db_path.stat().st_size / 1_048_576, 2) if db_path.exists() else None
 
+    on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME"))
+    volume_mounted = str(DATA_DIR).startswith("/data")
+    storage_warning = (
+        "DATA WILL BE LOST ON RESTART: Railway volume not mounted at /data. "
+        "Go to Railway dashboard → your service → Settings → Volumes → Add Volume → mount path: /data"
+        if on_railway and not volume_mounted else None
+    )
+
     return {
         "db_path": str(db_path),
         "db_size_mb": db_size_mb,
+        "storage": "railway_volume" if volume_mounted else "ephemeral_local",
+        "storage_warning": storage_warning,
         "tables": {
             "listings": {
                 "total": listings_total,

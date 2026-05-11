@@ -334,30 +334,48 @@ async function addDealer() {
   const url = document.getElementById('d-url').value.trim();
   const location = document.getElementById('d-location').value.trim();
   if (!name || !url) { alert('Name and URL are required'); return; }
-  await fetch(`${API}/dealers/`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ name, autotrader_url: url, location: location || null }),
-  });
-  document.getElementById('d-name').value = '';
-  document.getElementById('d-url').value = '';
-  document.getElementById('d-location').value = '';
-  loadDealers();
+  const btn = document.querySelector('[onclick="addDealer()"]');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const r = await fetch(`${API}/dealers/`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, autotrader_url: url, location: location || null }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert(`Failed to save dealer (${r.status}): ${err.detail || r.statusText}`);
+      return;
+    }
+    document.getElementById('d-name').value = '';
+    document.getElementById('d-url').value = '';
+    document.getElementById('d-location').value = '';
+    loadDealers();
+  } catch (e) {
+    alert(`Network error — dealer not saved: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Add Dealer';
+  }
 }
 
 async function removeDealer(id) {
   if (!confirm('Remove this dealer?')) return;
-  await fetch(`${API}/dealers/${id}`, { method: 'DELETE' });
+  const r = await fetch(`${API}/dealers/${id}`, { method: 'DELETE' });
+  if (!r.ok) { alert(`Failed to remove dealer (${r.status})`); return; }
   loadDealers();
 }
 
 async function triggerDealerScrape(id) {
-  await fetch(`${API}/dealers/${id}/scrape`, { method: 'POST' });
+  const r = await fetch(`${API}/dealers/${id}/scrape`, { method: 'POST' });
+  if (!r.ok) { alert(`Failed to start scrape (${r.status})`); return; }
   alert('Scrape started — check back in a few minutes');
 }
 
 async function triggerAllDealerScrape() {
-  await fetch(`${API}/dealers/scrape/all`, { method: 'POST' });
+  const r = await fetch(`${API}/dealers/scrape/all`, { method: 'POST' });
+  if (!r.ok) { alert(`Failed to start scrape (${r.status})`); return; }
   alert('Scraping all dealers — check back in a few minutes');
 }
 
