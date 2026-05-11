@@ -1,15 +1,21 @@
 """
-Bulk scraper — iterates through every major UK car make to collect all live
-listings rather than just the most-recently-added ones.
+Full-market bulk scraper.
 
-Regular hourly scrape: sort=date-desc, ~10 pages → catches new arrivals.
-Bulk scrape (weekly):  iterates ~50 makes × up to 50 pages each → full market.
+Strategy:
+  AutoTrader  — make × model × year_band  (~800 search tasks, ~16 hrs)
+  Car&Classic — make × model              (~500 search tasks,  ~8 hrs)
+
+Each completed task is checkpointed in BulkScrapeProgress so a run can
+be interrupted and resumed without re-scraping finished combinations.
 """
 import asyncio
 import logging
-from typing import AsyncGenerator
+from datetime import datetime
+from typing import AsyncGenerator, Optional
 
-from database import AsyncSessionLocal
+from sqlalchemy import select, and_
+
+from database import AsyncSessionLocal, BulkScrapeProgress
 from .autotrader import AutoTraderScraper
 from .carandclassic import CarAndClassicScraper
 from .base import RawListing
@@ -17,25 +23,197 @@ from .ingestion import upsert_listing
 
 logger = logging.getLogger(__name__)
 
-# All makes worth covering for a UK market overview.
-UK_MAKES = [
-    "Abarth", "Alfa Romeo", "Aston Martin", "Audi", "Bentley", "BMW",
-    "Citroen", "Cupra", "Dacia", "DS", "Ferrari", "Fiat", "Ford",
-    "Honda", "Hyundai", "Jaguar", "Jeep", "Kia", "Lamborghini",
-    "Land Rover", "Lexus", "Lotus", "Maserati", "Mazda", "McLaren",
-    "Mercedes-Benz", "MG", "MINI", "Mitsubishi", "Nissan", "Peugeot",
-    "Porsche", "Renault", "Rolls-Royce", "SEAT", "Skoda", "Smart",
-    "Subaru", "Suzuki", "Tesla", "Toyota", "Vauxhall", "Volkswagen",
-    "Volvo", "Alfa Romeo",
+# ── MAKE / MODEL CATALOGUE ────────────────────────────────────────────────────
+
+MAKES_MODELS: dict[str, list[str]] = {
+    "Abarth": ["500", "595", "695", "124 Spider", "Grande Punto"],
+    "Alfa Romeo": ["147", "156", "159", "Brera", "Giulia", "Giulietta", "GT",
+                   "Mito", "Spider", "Stelvio", "Tonale"],
+    "Aston Martin": ["DB9", "DB11", "DBS", "DBX", "Rapide", "V8 Vantage",
+                     "Vantage", "Vanquish"],
+    "Audi": ["A1", "A3", "A4", "A5", "A6", "A7", "A8", "e-tron", "Q2", "Q3",
+             "Q4 e-tron", "Q5", "Q7", "Q8", "R8", "RS3", "RS4", "RS5", "RS6",
+             "RS7", "S3", "S4", "S5", "SQ5", "SQ7", "TT"],
+    "Bentley": ["Bentayga", "Continental GT", "Flying Spur", "Mulsanne"],
+    "BMW": ["1 Series", "2 Series", "3 Series", "4 Series", "5 Series",
+            "6 Series", "7 Series", "8 Series", "i3", "i4", "i7", "iX",
+            "M2", "M3", "M4", "M5", "X1", "X2", "X3", "X4", "X5", "X6",
+            "X7", "Z3", "Z4"],
+    "Citroen": ["Berlingo", "C1", "C2", "C3", "C3 Aircross", "C4",
+                "C4 Cactus", "C5", "C5 Aircross", "C5 X", "Dispatch",
+                "Picasso", "SpaceTourer", "Xsara"],
+    "Cupra": ["Ateca", "Born", "Formentor", "Leon"],
+    "Dacia": ["Dokker", "Duster", "Jogger", "Logan", "Sandero", "Spring"],
+    "DS": ["DS3", "DS4", "DS5", "DS7", "DS9"],
+    "Ferrari": ["296", "458", "488", "812", "California", "F8",
+                "GTC4Lusso", "Portofino", "Roma", "SF90"],
+    "Fiat": ["124 Spider", "500", "500C", "500L", "500X", "Bravo", "Doblo",
+             "Ducato", "Panda", "Punto", "Tipo"],
+    "Ford": ["B-MAX", "C-MAX", "EcoSport", "Edge", "Fiesta", "Focus",
+             "Galaxy", "Ka", "Ka+", "Kuga", "Mondeo", "Mustang", "Puma",
+             "Ranger", "S-MAX", "Tourneo", "Transit", "Transit Connect"],
+    "Honda": ["Accord", "Civic", "CR-V", "CR-Z", "FR-V", "HR-V", "Jazz",
+              "Legend", "NSX", "S2000", "ZR-V", "e"],
+    "Hyundai": ["Bayon", "Coupe", "Getz", "i10", "i20", "i30", "i40",
+                "IONIQ", "IONIQ 5", "IONIQ 6", "Kona", "Santa Fe", "Tucson",
+                "Veloster"],
+    "Infiniti": ["Q30", "Q50", "Q60", "QX30", "QX50", "QX70"],
+    "Jaguar": ["E-Pace", "F-Pace", "F-Type", "I-Pace", "S-Type", "X-Type",
+               "XE", "XF", "XJ"],
+    "Jeep": ["Avenger", "Cherokee", "Compass", "Grand Cherokee", "Renegade",
+             "Wrangler"],
+    "Kia": ["Carens", "Ceed", "EV6", "Niro", "Picanto", "ProCeed", "Rio",
+            "Sorento", "Soul", "Sportage", "Stinger", "Stonic", "Xceed"],
+    "Lamborghini": ["Aventador", "Huracan", "Urus"],
+    "Land Rover": ["Defender", "Discovery", "Discovery Sport", "Freelander",
+                   "Range Rover", "Range Rover Evoque", "Range Rover Sport",
+                   "Range Rover Velar"],
+    "Lexus": ["CT", "ES", "GS", "IS", "LC", "LS", "LX", "NX", "RC", "RX", "UX"],
+    "Lotus": ["Elise", "Emira", "Evora", "Exige"],
+    "Maserati": ["Ghibli", "GranCabrio", "GranTurismo", "Levante", "MC20",
+                 "Quattroporte"],
+    "Mazda": ["2", "3", "6", "CX-3", "CX-30", "CX-5", "CX-60",
+              "MX-30", "MX-5", "RX-8"],
+    "McLaren": ["540C", "570S", "600LT", "650S", "675LT", "720S", "765LT",
+                "Artura", "GT"],
+    "Mercedes-Benz": ["A Class", "AMG GT", "B Class", "C Class", "CLA",
+                      "CLS", "E Class", "EQA", "EQB", "EQC", "EQE", "EQS",
+                      "G Class", "GLA", "GLB", "GLC", "GLE", "GLS", "S Class",
+                      "SL", "SLC", "Sprinter", "V Class", "Vito"],
+    "MG": ["3", "4", "5 EV", "GS", "HS", "Marvel R", "ZS"],
+    "MINI": ["Cabrio", "Clubman", "Convertible", "Countryman", "Hatch",
+             "Paceman", "Roadster"],
+    "Mitsubishi": ["ASX", "Colt", "Eclipse Cross", "Galant", "L200",
+                   "Outlander", "Shogun"],
+    "Nissan": ["370Z", "Ariya", "GT-R", "Juke", "Leaf", "Micra", "Navara",
+               "Note", "NV200", "Pulsar", "Qashqai", "X-Trail"],
+    "Peugeot": ["107", "108", "2008", "207", "208", "3008", "307", "308",
+                "408", "5008", "508", "Boxer", "e-208", "e-2008", "Expert",
+                "Partner", "RCZ"],
+    "Porsche": ["718 Boxster", "718 Cayman", "911", "Boxster", "Cayenne",
+                "Cayman", "Macan", "Panamera", "Taycan"],
+    "Renault": ["Arkana", "Austral", "Captur", "Clio", "Espace", "Kadjar",
+                "Kangoo", "Koleos", "Laguna", "Master", "Megane", "Scenic",
+                "Trafic", "Twingo", "Zoe"],
+    "Rolls-Royce": ["Cullinan", "Dawn", "Ghost", "Phantom", "Spectre",
+                    "Silver Shadow", "Wraith"],
+    "SEAT": ["Alhambra", "Altea", "Arona", "Ateca", "Ibiza", "Leon", "Mii",
+             "Tarraco", "Toledo"],
+    "Skoda": ["Citigo", "Enyaq", "Fabia", "Kamiq", "Karoq", "Kodiaq",
+              "Octavia", "Rapid", "Scala", "Superb", "Yeti"],
+    "Smart": ["EQ Fortwo", "Forfour", "Fortwo"],
+    "Subaru": ["BRZ", "Forester", "Impreza", "Legacy", "Levorg",
+               "Outback", "WRX STI", "XV"],
+    "Suzuki": ["Alto", "Baleno", "Celerio", "Ignis", "Jimny", "S-Cross",
+               "Swift", "SX4", "Vitara"],
+    "Tesla": ["Model 3", "Model S", "Model X", "Model Y"],
+    "Toyota": ["Auris", "Avensis", "Aygo", "C-HR", "Camry", "Corolla",
+               "GR86", "GT86", "Hilux", "IQ", "Land Cruiser", "Prius",
+               "Proace", "RAV4", "Urban Cruiser", "Verso", "Yaris"],
+    "Vauxhall": ["Adam", "Agila", "Antara", "Astra", "Cascada", "Combo",
+                 "Corsa", "Crossland", "GTC", "Grandland", "Insignia",
+                 "Meriva", "Mokka", "Signum", "Vectra", "Vivaro", "Zafira"],
+    "Volkswagen": ["Amarok", "Arteon", "Caddy", "Golf", "ID.3", "ID.4",
+                   "ID.5", "Passat", "Polo", "Scirocco", "Sharan", "T-Cross",
+                   "T-Roc", "Tiguan", "Touareg", "Touran", "Transporter",
+                   "Up"],
+    "Volvo": ["C30", "C40", "C70", "EX30", "EX90", "S40", "S60", "S80",
+              "S90", "V40", "V50", "V60", "V70", "V90", "XC40", "XC60",
+              "XC70", "XC90"],
+}
+
+# Models popular enough that a single search hits the 100-page cap.
+# These get split into year bands instead.
+HIGH_VOLUME: set[tuple[str, str]] = {
+    ("Audi", "A3"), ("Audi", "A4"), ("Audi", "Q3"), ("Audi", "Q5"),
+    ("BMW", "1 Series"), ("BMW", "3 Series"), ("BMW", "5 Series"),
+    ("BMW", "X3"), ("BMW", "X5"),
+    ("Ford", "Fiesta"), ("Ford", "Focus"), ("Ford", "Kuga"),
+    ("Ford", "Mondeo"), ("Ford", "Puma"),
+    ("Hyundai", "i20"), ("Hyundai", "i30"), ("Hyundai", "Tucson"),
+    ("Kia", "Ceed"), ("Kia", "Niro"), ("Kia", "Sportage"),
+    ("Mercedes-Benz", "A Class"), ("Mercedes-Benz", "C Class"),
+    ("Mercedes-Benz", "E Class"), ("Mercedes-Benz", "GLC"),
+    ("Nissan", "Juke"), ("Nissan", "Qashqai"),
+    ("Peugeot", "208"), ("Peugeot", "2008"), ("Peugeot", "308"),
+    ("Renault", "Captur"), ("Renault", "Clio"), ("Renault", "Megane"),
+    ("SEAT", "Ibiza"), ("SEAT", "Leon"),
+    ("Skoda", "Fabia"), ("Skoda", "Kodiaq"), ("Skoda", "Octavia"),
+    ("Toyota", "C-HR"), ("Toyota", "Corolla"), ("Toyota", "RAV4"),
+    ("Toyota", "Yaris"),
+    ("Vauxhall", "Astra"), ("Vauxhall", "Corsa"), ("Vauxhall", "Mokka"),
+    ("Volkswagen", "Golf"), ("Volkswagen", "Passat"), ("Volkswagen", "Polo"),
+    ("Volkswagen", "T-Roc"), ("Volkswagen", "Tiguan"),
+}
+
+# Year bands used when splitting high-volume combos
+YEAR_BANDS: list[tuple[Optional[int], Optional[int]]] = [
+    (None, 2009),
+    (2010, 2014),
+    (2015, 2018),
+    (2019, 2022),
+    (2023, None),
 ]
-UK_MAKES = list(dict.fromkeys(UK_MAKES))  # deduplicate while preserving order
+
+# AutoTrader hard-caps at 100 pages (~1 800 results) per search
+AT_MAX_PAGES = 100
+CC_MAX_PAGES = 100
 
 
-async def _ingest_stream(
-    stream: AsyncGenerator[RawListing, None],
-    source: str,
-) -> int:
-    """Upsert every listing from the stream. Returns total count saved."""
+# ── TASK BUILDER ──────────────────────────────────────────────────────────────
+
+def _build_tasks(source: str) -> list[tuple[str, str, Optional[int], Optional[int]]]:
+    """
+    Return all (make, model, year_from, year_to) tuples for a source.
+    High-volume AutoTrader combos are expanded into year bands.
+    Car&Classic is make+model only (no year splits needed).
+    """
+    tasks: list[tuple[str, str, Optional[int], Optional[int]]] = []
+    for make, models in MAKES_MODELS.items():
+        for model in models:
+            if source == "autotrader" and (make, model) in HIGH_VOLUME:
+                for y_from, y_to in YEAR_BANDS:
+                    tasks.append((make, model, y_from, y_to))
+            else:
+                tasks.append((make, model, None, None))
+    return tasks
+
+
+async def _completed_tasks(source: str) -> set[tuple]:
+    """Return the set of (make, model, year_from, year_to) already in the DB."""
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(
+                BulkScrapeProgress.make,
+                BulkScrapeProgress.model,
+                BulkScrapeProgress.year_from,
+                BulkScrapeProgress.year_to,
+            ).where(BulkScrapeProgress.source == source)
+        )
+        return {(r.make, r.model, r.year_from, r.year_to) for r in rows.all()}
+
+
+async def _mark_done(source: str, make: str, model: str,
+                     year_from: Optional[int], year_to: Optional[int],
+                     count: int) -> None:
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    async with AsyncSessionLocal() as session:
+        stmt = sqlite_insert(BulkScrapeProgress).values(
+            source=source, make=make, model=model,
+            year_from=year_from, year_to=year_to,
+            completed_at=datetime.utcnow(), listings_saved=count,
+        ).on_conflict_do_update(
+            index_elements=["source", "make", "model", "year_from", "year_to"],
+            set_={"completed_at": datetime.utcnow(), "listings_saved": count},
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
+# ── INGESTOR ──────────────────────────────────────────────────────────────────
+
+async def _ingest_stream(stream: AsyncGenerator[RawListing, None],
+                         source: str) -> int:
     count = 0
     async with AsyncSessionLocal() as session:
         async for raw in stream:
@@ -44,62 +222,102 @@ async def _ingest_stream(
                 count += 1
                 if count % 100 == 0:
                     await session.commit()
-                    logger.info(f"Bulk {source}: {count} listings saved so far...")
+                    logger.info(f"Bulk {source}: {count} listings saved so far…")
             except Exception as e:
                 logger.debug(f"Bulk ingest error ({source}): {e}")
         await session.commit()
     return count
 
 
-async def run_bulk_autotrader(pages_per_make: int = 50) -> dict:
-    """Scrape all makes on AutoTrader. Returns summary dict."""
+# ── MAIN RUNNERS ──────────────────────────────────────────────────────────────
+
+async def run_bulk_autotrader(resume: bool = True) -> dict:
+    """
+    Scrape every make/model combo on AutoTrader.
+    High-volume models are split by year band.
+    Pass resume=False to re-scrape already-completed tasks.
+    """
+    all_tasks = _build_tasks("autotrader")
+    done = await _completed_tasks("autotrader") if resume else set()
+    pending = [t for t in all_tasks if t not in done]
+
+    logger.info(
+        f"AutoTrader full scrape: {len(all_tasks)} tasks total, "
+        f"{len(done)} already done, {len(pending)} remaining"
+    )
+
     total = 0
     errors = []
     scraper = AutoTraderScraper()
-    for make in UK_MAKES:
+
+    for i, (make, model, y_from, y_to) in enumerate(pending, 1):
+        band = f"{y_from or '?'}–{y_to or '?'}" if (y_from or y_to) else "all years"
+        logger.info(f"AT [{i}/{len(pending)}] {make} {model} ({band})")
         try:
-            logger.info(f"Bulk AT: scraping make '{make}'...")
             count = await _ingest_stream(
-                scraper.search(make=make, max_pages=pages_per_make),
+                scraper.search(
+                    make=make, model=model,
+                    year_min=y_from, year_max=y_to,
+                    max_pages=AT_MAX_PAGES,
+                ),
                 "autotrader",
             )
+            await _mark_done("autotrader", make, model, y_from, y_to, count)
             total += count
-            logger.info(f"Bulk AT: '{make}' → {count} listings (running total: {total})")
-            await asyncio.sleep(5)  # polite pause between makes
+            logger.info(f"AT [{i}/{len(pending)}] {make} {model} → {count} (total: {total})")
+            await asyncio.sleep(5)
         except Exception as e:
-            logger.error(f"Bulk AT: error on '{make}': {e}")
-            errors.append({"make": make, "error": str(e)})
+            logger.error(f"AT error on {make} {model}: {e}")
+            errors.append({"make": make, "model": model, "error": str(e)})
 
-    return {"source": "autotrader", "total": total, "errors": errors}
+    return {"source": "autotrader", "total": total,
+            "tasks_done": len(pending), "errors": errors}
 
 
-async def run_bulk_carandclassic(pages_per_make: int = 50) -> dict:
-    """Scrape all makes on Car & Classic. Returns summary dict."""
+async def run_bulk_carandclassic(resume: bool = True) -> dict:
+    """Scrape every make/model combo on Car & Classic."""
+    all_tasks = _build_tasks("carandclassic")
+    done = await _completed_tasks("carandclassic") if resume else set()
+    pending = [t for t in all_tasks if t not in done]
+
+    logger.info(
+        f"C&C full scrape: {len(all_tasks)} tasks total, "
+        f"{len(done)} already done, {len(pending)} remaining"
+    )
+
     total = 0
     errors = []
     scraper = CarAndClassicScraper()
-    for make in UK_MAKES:
+
+    for i, (make, model, y_from, y_to) in enumerate(pending, 1):
+        logger.info(f"C&C [{i}/{len(pending)}] {make} {model}")
         try:
-            logger.info(f"Bulk C&C: scraping make '{make}'...")
             count = await _ingest_stream(
-                scraper.search(make=make, max_pages=pages_per_make),
+                scraper.search(make=make, model=model, max_pages=CC_MAX_PAGES),
                 "carandclassic",
             )
+            await _mark_done("carandclassic", make, model, None, None, count)
             total += count
-            logger.info(f"Bulk C&C: '{make}' → {count} listings (running total: {total})")
+            logger.info(f"C&C [{i}/{len(pending)}] {make} {model} → {count} (total: {total})")
             await asyncio.sleep(5)
         except Exception as e:
-            logger.error(f"Bulk C&C: error on '{make}': {e}")
-            errors.append({"make": make, "error": str(e)})
+            logger.error(f"C&C error on {make} {model}: {e}")
+            errors.append({"make": make, "model": model, "error": str(e)})
 
-    return {"source": "carandclassic", "total": total, "errors": errors}
+    return {"source": "carandclassic", "total": total,
+            "tasks_done": len(pending), "errors": errors}
 
 
-async def run_full_bulk_scrape(pages_per_make: int = 50) -> dict:
+async def run_full_bulk_scrape(resume: bool = True) -> dict:
     """Run both scrapers sequentially. Used by the weekly scheduler job."""
-    logger.info(f"=== Full bulk scrape starting: {len(UK_MAKES)} makes × up to {pages_per_make} pages ===")
-    at_result = await run_bulk_autotrader(pages_per_make)
-    cc_result = await run_bulk_carandclassic(pages_per_make)
-    total = at_result["total"] + cc_result["total"]
-    logger.info(f"=== Full bulk scrape complete: {total} total listings ===")
-    return {"autotrader": at_result, "carandclassic": cc_result, "grand_total": total}
+    at_tasks = len(_build_tasks("autotrader"))
+    cc_tasks = len(_build_tasks("carandclassic"))
+    logger.info(
+        f"=== Full bulk scrape starting: "
+        f"{at_tasks} AT tasks + {cc_tasks} C&C tasks ==="
+    )
+    at = await run_bulk_autotrader(resume=resume)
+    cc = await run_bulk_carandclassic(resume=resume)
+    grand = at["total"] + cc["total"]
+    logger.info(f"=== Full bulk scrape complete: {grand} total listings ===")
+    return {"autotrader": at, "carandclassic": cc, "grand_total": grand}

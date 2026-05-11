@@ -199,6 +199,28 @@ class DealerListing(Base):
     )
 
 
+class BulkScrapeProgress(Base):
+    """Checkpoint record for each completed (source, make, model, year_band) search task."""
+    __tablename__ = "bulk_scrape_progress"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(32), nullable=False)
+    make = Column(String(64), nullable=False)
+    model = Column(String(128), nullable=True)
+    year_from = Column(Integer, nullable=True)
+    year_to = Column(Integer, nullable=True)
+    completed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    listings_saved = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index(
+            "ix_bulk_progress_task",
+            "source", "make", "model", "year_from", "year_to",
+            unique=True,
+        ),
+    )
+
+
 class ValuationCache(Base):
     """Cached AutoTrader retail valuations (reg + mileage → valuation data)."""
     __tablename__ = "valuation_cache"
