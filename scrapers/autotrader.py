@@ -111,6 +111,7 @@ class AutoTraderScraper(BaseScraper):
         model: str = "",
         year_min: int = None,
         year_max: int = None,
+        price_min: int = None,
         price_max: int = None,
         page: int = 1,
         postcode: str = "SW1A1AA",
@@ -130,6 +131,8 @@ class AutoTraderScraper(BaseScraper):
             params["year-from"] = year_min
         if year_max:
             params["year-to"] = year_max
+        if price_min:
+            params["price-from"] = price_min
         if price_max:
             params["price-to"] = price_max
         return f"{SEARCH_URL}?{urlencode(params)}"
@@ -361,6 +364,7 @@ class AutoTraderScraper(BaseScraper):
         model: str = "",
         year_min: int = None,
         year_max: int = None,
+        price_min: int = None,
         price_max: int = None,
         max_pages: int = 3,
     ) -> AsyncGenerator[RawListing, None]:
@@ -371,7 +375,8 @@ class AutoTraderScraper(BaseScraper):
                     url = self._build_search_url(
                         make=make, model=model,
                         year_min=year_min, year_max=year_max,
-                        price_max=price_max, page=page_num,
+                        price_min=price_min, price_max=price_max,
+                        page=page_num,
                     )
                     listings, has_next = await self._scrape_page(ctx, url)
                     for listing in listings:

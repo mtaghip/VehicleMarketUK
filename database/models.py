@@ -209,7 +209,7 @@ class DealerListing(Base):
 
 
 class BulkScrapeProgress(Base):
-    """Checkpoint record for each completed (source, make, model, year_band) search task."""
+    """Checkpoint record for each completed search task (source, make, model, year_band, price_band)."""
     __tablename__ = "bulk_scrape_progress"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -218,13 +218,15 @@ class BulkScrapeProgress(Base):
     model = Column(String(128), nullable=True)
     year_from = Column(Integer, nullable=True)
     year_to = Column(Integer, nullable=True)
+    price_from = Column(Integer, nullable=True)
+    price_to = Column(Integer, nullable=True)
     completed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     listings_saved = Column(Integer, default=0)
 
     __table_args__ = (
         Index(
             "ix_bulk_progress_task",
-            "source", "make", "model", "year_from", "year_to",
+            "source", "make", "model", "year_from", "year_to", "price_from", "price_to",
             unique=True,
         ),
     )

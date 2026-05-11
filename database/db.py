@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import event
+from sqlalchemy import event, text
 from config import settings, DATA_DIR
 from .models import Base
 
@@ -29,6 +29,14 @@ AsyncSessionLocal = async_sessionmaker(
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Additive migrations — safe to run repeatedly on SQLite
+        for col in ("price_from INTEGER", "price_to INTEGER"):
+            try:
+                await conn.execute(
+                    text(f"ALTER TABLE bulk_scrape_progress ADD COLUMN {col}")
+                )
+            except Exception:
+                pass  # Column already exists
 
 
 async def get_db():

@@ -123,30 +123,43 @@ MAKES_MODELS: dict[str, list[str]] = {
 }
 
 # Models popular enough that a single search hits the 100-page cap.
-# These get split into year bands instead.
+# These get split into year bands only.
 HIGH_VOLUME: set[tuple[str, str]] = {
-    ("Audi", "A3"), ("Audi", "A4"), ("Audi", "Q3"), ("Audi", "Q5"),
-    ("BMW", "1 Series"), ("BMW", "3 Series"), ("BMW", "5 Series"),
-    ("BMW", "X3"), ("BMW", "X5"),
-    ("Ford", "Fiesta"), ("Ford", "Focus"), ("Ford", "Kuga"),
+    ("Audi", "A4"), ("Audi", "Q3"), ("Audi", "Q5"),
+    ("BMW", "1 Series"), ("BMW", "X3"), ("BMW", "X5"),
     ("Ford", "Mondeo"), ("Ford", "Puma"),
     ("Hyundai", "i20"), ("Hyundai", "i30"), ("Hyundai", "Tucson"),
-    ("Kia", "Ceed"), ("Kia", "Niro"), ("Kia", "Sportage"),
-    ("Mercedes-Benz", "A Class"), ("Mercedes-Benz", "C Class"),
+    ("Kia", "Ceed"), ("Kia", "Niro"),
     ("Mercedes-Benz", "E Class"), ("Mercedes-Benz", "GLC"),
-    ("Nissan", "Juke"), ("Nissan", "Qashqai"),
-    ("Peugeot", "208"), ("Peugeot", "2008"), ("Peugeot", "308"),
-    ("Renault", "Captur"), ("Renault", "Clio"), ("Renault", "Megane"),
-    ("SEAT", "Ibiza"), ("SEAT", "Leon"),
-    ("Skoda", "Fabia"), ("Skoda", "Kodiaq"), ("Skoda", "Octavia"),
+    ("Nissan", "Juke"),
+    ("Peugeot", "2008"), ("Peugeot", "308"),
+    ("Renault", "Captur"), ("Renault", "Megane"),
+    ("SEAT", "Leon"),
+    ("Skoda", "Fabia"), ("Skoda", "Kodiaq"),
     ("Toyota", "C-HR"), ("Toyota", "Corolla"), ("Toyota", "RAV4"),
-    ("Toyota", "Yaris"),
-    ("Vauxhall", "Astra"), ("Vauxhall", "Corsa"), ("Vauxhall", "Mokka"),
-    ("Volkswagen", "Golf"), ("Volkswagen", "Passat"), ("Volkswagen", "Polo"),
-    ("Volkswagen", "T-Roc"), ("Volkswagen", "Tiguan"),
+    ("Vauxhall", "Mokka"),
+    ("Volkswagen", "Passat"), ("Volkswagen", "T-Roc"),
 }
 
-# Year bands used when splitting high-volume combos
+# Top 20 highest-volume UK models — split by BOTH year band AND price band
+# to stay under AutoTrader's 1,800-result search cap.
+ULTRA_HIGH_VOLUME: set[tuple[str, str]] = {
+    ("Audi", "A3"),
+    ("BMW", "3 Series"), ("BMW", "5 Series"),
+    ("Ford", "Fiesta"), ("Ford", "Focus"), ("Ford", "Kuga"),
+    ("Kia", "Sportage"),
+    ("Mercedes-Benz", "A Class"), ("Mercedes-Benz", "C Class"),
+    ("Nissan", "Qashqai"),
+    ("Peugeot", "208"),
+    ("Renault", "Clio"),
+    ("SEAT", "Ibiza"),
+    ("Skoda", "Octavia"),
+    ("Toyota", "Yaris"),
+    ("Vauxhall", "Astra"), ("Vauxhall", "Corsa"),
+    ("Volkswagen", "Golf"), ("Volkswagen", "Polo"), ("Volkswagen", "Tiguan"),
+}
+
+# Year bands for HIGH_VOLUME and ULTRA_HIGH_VOLUME
 YEAR_BANDS: list[tuple[Optional[int], Optional[int]]] = [
     (None, 2009),
     (2010, 2014),
@@ -155,32 +168,52 @@ YEAR_BANDS: list[tuple[Optional[int], Optional[int]]] = [
     (2023, None),
 ]
 
-# AutoTrader hard-caps at 100 pages (~1 800 results) per search
+# Price bands applied on top of year bands for ULTRA_HIGH_VOLUME models
+PRICE_BANDS: list[tuple[Optional[int], Optional[int]]] = [
+    (None, 4999),
+    (5000, 9999),
+    (10000, 14999),
+    (15000, 24999),
+    (25000, None),
+]
+
+# AutoTrader hard-caps at 100 pages (~1,800 results) per search
 AT_MAX_PAGES = 100
 CC_MAX_PAGES = 100
+
+# Task tuple: (make, model, year_from, year_to, price_from, price_to)
+Task = tuple[str, str, Optional[int], Optional[int], Optional[int], Optional[int]]
 
 
 # ── TASK BUILDER ──────────────────────────────────────────────────────────────
 
-def _build_tasks(source: str) -> list[tuple[str, str, Optional[int], Optional[int]]]:
+def _build_tasks(source: str) -> list[Task]:
     """
-    Return all (make, model, year_from, year_to) tuples for a source.
-    High-volume AutoTrader combos are expanded into year bands.
-    Car&Classic is make+model only (no year splits needed).
+    Build all search tasks for a source.
+
+    AutoTrader strategy:
+      ULTRA_HIGH_VOLUME → year_band × price_band  (25 tasks each, ~500 total)
+      HIGH_VOLUME       → year_band only           (5 tasks each)
+      everything else   → single task
+    Car&Classic: make+model only (no splits needed — smaller site).
     """
-    tasks: list[tuple[str, str, Optional[int], Optional[int]]] = []
+    tasks: list[Task] = []
     for make, models in MAKES_MODELS.items():
         for model in models:
-            if source == "autotrader" and (make, model) in HIGH_VOLUME:
+            if source == "autotrader" and (make, model) in ULTRA_HIGH_VOLUME:
                 for y_from, y_to in YEAR_BANDS:
-                    tasks.append((make, model, y_from, y_to))
+                    for p_from, p_to in PRICE_BANDS:
+                        tasks.append((make, model, y_from, y_to, p_from, p_to))
+            elif source == "autotrader" and (make, model) in HIGH_VOLUME:
+                for y_from, y_to in YEAR_BANDS:
+                    tasks.append((make, model, y_from, y_to, None, None))
             else:
-                tasks.append((make, model, None, None))
+                tasks.append((make, model, None, None, None, None))
     return tasks
 
 
-async def _completed_tasks(source: str) -> set[tuple]:
-    """Return the set of (make, model, year_from, year_to) already in the DB."""
+async def _completed_tasks(source: str) -> set[Task]:
+    """Return the set of already-completed tasks from the DB."""
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             select(
@@ -188,22 +221,30 @@ async def _completed_tasks(source: str) -> set[tuple]:
                 BulkScrapeProgress.model,
                 BulkScrapeProgress.year_from,
                 BulkScrapeProgress.year_to,
+                BulkScrapeProgress.price_from,
+                BulkScrapeProgress.price_to,
             ).where(BulkScrapeProgress.source == source)
         )
-        return {(r.make, r.model, r.year_from, r.year_to) for r in rows.all()}
+        return {(r.make, r.model, r.year_from, r.year_to, r.price_from, r.price_to)
+                for r in rows.all()}
 
 
 async def _mark_done(source: str, make: str, model: str,
                      year_from: Optional[int], year_to: Optional[int],
+                     price_from: Optional[int], price_to: Optional[int],
                      count: int) -> None:
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     async with AsyncSessionLocal() as session:
         stmt = sqlite_insert(BulkScrapeProgress).values(
             source=source, make=make, model=model,
             year_from=year_from, year_to=year_to,
+            price_from=price_from, price_to=price_to,
             completed_at=datetime.utcnow(), listings_saved=count,
         ).on_conflict_do_update(
-            index_elements=["source", "make", "model", "year_from", "year_to"],
+            index_elements=[
+                "source", "make", "model",
+                "year_from", "year_to", "price_from", "price_to",
+            ],
             set_={"completed_at": datetime.utcnow(), "listings_saved": count},
         )
         await session.execute(stmt)
@@ -234,7 +275,8 @@ async def _ingest_stream(stream: AsyncGenerator[RawListing, None],
 async def run_bulk_autotrader(resume: bool = True) -> dict:
     """
     Scrape every make/model combo on AutoTrader.
-    High-volume models are split by year band.
+    Ultra-high-volume models split by year band × price band (25 tasks each).
+    High-volume models split by year band only (5 tasks each).
     Pass resume=False to re-scrape already-completed tasks.
     """
     all_tasks = _build_tasks("autotrader")
@@ -250,21 +292,23 @@ async def run_bulk_autotrader(resume: bool = True) -> dict:
     errors = []
     scraper = AutoTraderScraper()
 
-    for i, (make, model, y_from, y_to) in enumerate(pending, 1):
-        band = f"{y_from or '?'}–{y_to or '?'}" if (y_from or y_to) else "all years"
-        logger.info(f"AT [{i}/{len(pending)}] {make} {model} ({band})")
+    for i, (make, model, y_from, y_to, p_from, p_to) in enumerate(pending, 1):
+        year_desc = f"{y_from or '?'}–{y_to or '?'}" if (y_from or y_to) else "all years"
+        price_desc = f"£{p_from or 0}–£{p_to or '∞'}" if (p_from or p_to) else "all prices"
+        logger.info(f"AT [{i}/{len(pending)}] {make} {model} | {year_desc} | {price_desc}")
         try:
             count = await _ingest_stream(
                 scraper.search(
                     make=make, model=model,
                     year_min=y_from, year_max=y_to,
+                    price_min=p_from, price_max=p_to,
                     max_pages=AT_MAX_PAGES,
                 ),
                 "autotrader",
             )
-            await _mark_done("autotrader", make, model, y_from, y_to, count)
+            await _mark_done("autotrader", make, model, y_from, y_to, p_from, p_to, count)
             total += count
-            logger.info(f"AT [{i}/{len(pending)}] {make} {model} → {count} (total: {total})")
+            logger.info(f"AT [{i}/{len(pending)}] {make} {model} → {count} (running total: {total})")
             await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"AT error on {make} {model}: {e}")
@@ -289,14 +333,14 @@ async def run_bulk_carandclassic(resume: bool = True) -> dict:
     errors = []
     scraper = CarAndClassicScraper()
 
-    for i, (make, model, y_from, y_to) in enumerate(pending, 1):
+    for i, (make, model, y_from, y_to, p_from, p_to) in enumerate(pending, 1):
         logger.info(f"C&C [{i}/{len(pending)}] {make} {model}")
         try:
             count = await _ingest_stream(
                 scraper.search(make=make, model=model, max_pages=CC_MAX_PAGES),
                 "carandclassic",
             )
-            await _mark_done("carandclassic", make, model, None, None, count)
+            await _mark_done("carandclassic", make, model, None, None, None, None, count)
             total += count
             logger.info(f"C&C [{i}/{len(pending)}] {make} {model} → {count} (total: {total})")
             await asyncio.sleep(5)
