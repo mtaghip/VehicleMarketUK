@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = _default_db_url
     scrape_interval_minutes: int = 60
     max_pages_per_run: int = 10
+    bulk_scrape_pages: int = 50
     request_delay_seconds: float = 3.0
     headless: bool = True
     api_host: str = "0.0.0.0"

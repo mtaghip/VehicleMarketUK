@@ -49,6 +49,14 @@ async def scrape_dealers():
     logger.info(f"Dealer scrape complete: {totals}")
 
 
+async def bulk_scrape_all():
+    """Weekly full-market scrape — covers every major make across both sites."""
+    logger.info("Starting weekly bulk scrape...")
+    from scrapers.bulk import run_full_bulk_scrape
+    result = await run_full_bulk_scrape(pages_per_make=settings.bulk_scrape_pages)
+    logger.info(f"Weekly bulk scrape complete: {result.get('grand_total', 0)} total listings")
+
+
 def setup_scheduler():
     interval = settings.scrape_interval_minutes
 
@@ -89,6 +97,17 @@ def setup_scheduler():
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=600,
+    )
+
+    # Weekly full-market bulk scrape — Sunday 02:00 London time
+    scheduler.add_job(
+        bulk_scrape_all,
+        trigger=CronTrigger(day_of_week="sun", hour=2, minute=0),
+        id="bulk_scrape_weekly",
+        name="Weekly full-market bulk scrape",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
 
     return scheduler
