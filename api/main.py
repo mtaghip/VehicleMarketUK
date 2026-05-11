@@ -17,6 +17,7 @@ from api.routes import (
     listings_router, analytics_router,
     plate_router, alerts_router, scraper_router,
     valuation_router, dealers_router, live_router,
+    usage_router,
 )
 
 security = HTTPBasic()
@@ -76,6 +77,7 @@ app.include_router(scraper_router, prefix="/api", dependencies=[Depends(require_
 app.include_router(valuation_router, prefix="/api", dependencies=[Depends(require_auth)])
 app.include_router(dealers_router, prefix="/api", dependencies=[Depends(require_auth)])
 app.include_router(live_router, prefix="/api", dependencies=[Depends(require_auth)])
+app.include_router(usage_router, prefix="/api", dependencies=[Depends(require_auth)])
 
 # Serve dashboard
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
