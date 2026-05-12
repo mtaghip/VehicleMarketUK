@@ -119,11 +119,23 @@ async function loadDashboard() {
     document.getElementById('activity-feed').innerHTML = activity.slice(0, 20).map(e => {
       const icon = e.type === 'new' ? '🟢' : '🔴';
       const label = e.type === 'new' ? 'Listed' : `Sold in ${e.days_to_sell ?? '?'}d`;
+      const title = [e.year, e.make, e.model, e.variant].filter(Boolean).join(' ') || 'Unknown vehicle';
+      const specs = [
+        e.reg_plate ? `<span style="font-family:monospace;background:#fef08a;color:#1a1a1a;padding:0 5px;border-radius:3px;font-size:.75rem">${e.reg_plate}</span>` : '',
+        e.colour || '',
+        e.fuel_type || '',
+        e.transmission || '',
+        e.mileage ? fmt(e.mileage) + ' mi' : '',
+        e.location || '',
+      ].filter(Boolean).join(' · ');
+      const sellerIcon = e.seller_type === 'private' ? '🏠' : e.seller_type === 'dealer' ? '🏢' : '';
       return `<div class="activity-item">
         <span class="activity-icon">${icon}</span>
-        <span class="activity-text"><strong>${e.year || ''} ${e.make || ''} ${e.model || ''}</strong>
-          ${fmtPrice(e.price)} · ${e.colour || ''} · ${label}
-          ${sourceBadge(e.source)}
+        <span class="activity-text">
+          <strong>${e.url ? `<a href="${e.url}" target="_blank" style="color:inherit;text-decoration:underline">${title}</a>` : title}</strong>
+          <span style="color:var(--success);font-weight:600"> ${fmtPrice(e.price)}</span>
+          <span class="activity-label ${e.type === 'sold' ? 'label-sold' : 'label-new'}">${label}</span>
+          <div style="font-size:.78rem;color:var(--text-muted);margin-top:2px">${specs} ${sellerIcon} ${sourceBadge(e.source)}</div>
         </span>
         <span class="activity-time">${timeAgo(e.time)}</span>
       </div>`;

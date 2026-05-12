@@ -401,3 +401,10 @@ select.filter-input option { background: var(--surface2); }
   font-size: .85rem; color: var(--text-muted); cursor: pointer; white-space: nowrap;
 }
 .checkbox-label input { cursor: pointer; }
+
+.activity-label {
+  display: inline-block; font-size: .72rem; font-weight: 600;
+  padding: 1px 7px; border-radius: 10px; margin-left: 4px;
+}
+.label-new  { background: #14532d; color: var(--success); }
+.label-sold { background: #450a0a; color: var(--danger); }
