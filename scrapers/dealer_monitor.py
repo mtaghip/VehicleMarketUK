@@ -5,6 +5,8 @@ AutoTrader dealer profile pages are public:
   https://www.autotrader.co.uk/dealers/<county>/<town>/<name>-<id>/
 
 We scrape their current listings each cycle and mark any that vanished as sold.
+Uses the same link-first approach as the main AutoTrader scraper so it stays
+robust against layout changes.
 """
 import asyncio
 import re
@@ -12,7 +14,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from playwright.async_api import async_playwright
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,159 +44,84 @@ def _parse_year(text: str) -> Optional[int]:
 
 
 def _extract_dealer_id(url: str) -> str:
-    """Pull the numeric dealer ID from the end of an AutoTrader dealer URL."""
     m = re.search(r"-(\d+)/?$", url.rstrip("/"))
     return m.group(1) if m else url.split("/")[-1]
 
 
-async def scrape_dealer(
-    session: AsyncSession,
-    dealer: MonitoredDealer,
-) -> dict:
-    """Scrape a single dealer's current stock and reconcile with DB."""
-    import random
-    ua = random.choice(USER_AGENTS)
-
-    found_ids: set[str] = set()
-    new_count = sold_count = 0
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=settings.headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-        ctx = await browser.new_context(
-            user_agent=ua,
-            viewport={"width": 1366, "height": 768},
-            locale="en-GB",
-        )
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
-
-        try:
-            # Build search URL for this dealer's stock
-            dealer_id = dealer.autotrader_dealer_id or _extract_dealer_id(dealer.autotrader_url or "")
-            if dealer_id:
-                search_url = f"{BASE_URL}/car-search?advertising-location=at_profile_dealer&dealer-id={dealer_id}&page=1"
-            elif dealer.autotrader_url:
-                search_url = dealer.autotrader_url
-            else:
-                logger.warning(f"No URL or ID for dealer {dealer.name}")
-                return {"new": 0, "sold": 0, "total": 0}
-
-            page_num = 1
-            while page_num <= 20:  # cap at 20 pages per dealer
-                url = search_url.replace("page=1", f"page={page_num}") if page_num > 1 else search_url
-                page = await ctx.new_page()
-
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(2)
-
-                    # Cookie consent on first page
-                    if page_num == 1:
-                        try:
-                            for sel in ["#onetrust-accept-btn-handler", "button:has-text('Accept all')"]:
-                                btn = page.locator(sel)
-                                if await btn.count() > 0:
-                                    await btn.first.click()
-                                    await asyncio.sleep(1)
-                                    break
-                        except Exception:
-                            pass
-
-                    html = await page.content()
-                    soup = BeautifulSoup(html, "lxml")
-
-                    cards = soup.select(
-                        "li.search-page__result, "
-                        "article[data-testid='search-listing-card'], "
-                        "section.product-card"
-                    )
-
-                    if not cards:
-                        break
-
-                    for card in cards:
-                        listing = _parse_card(card)
-                        if not listing:
-                            continue
-
-                        found_ids.add(listing["listing_id"])
-                        n = await _upsert_dealer_listing(session, dealer.id, listing)
-                        if n:
-                            new_count += 1
-
-                    # Next page?
-                    next_btn = soup.select_one("a[data-testid='pagination-next'], a[aria-label='Next page']")
-                    if not next_btn:
-                        break
-                    page_num += 1
-                    await asyncio.sleep(settings.request_delay_seconds)
-
-                finally:
-                    await page.close()
-
-        except Exception as e:
-            logger.error(f"Dealer scrape error for {dealer.name}: {e}", exc_info=True)
-        finally:
-            await ctx.close()
-            await browser.close()
-
-    # Mark sold: active listings not seen in this run
-    sold_count = await _mark_dealer_sold(session, dealer.id, found_ids)
-
-    # Update dealer metadata
-    dealer.last_scraped = datetime.utcnow()
-    dealer.total_stock = len(found_ids)
-    await session.commit()
-
-    logger.info(f"Dealer '{dealer.name}': {len(found_ids)} live, {new_count} new, {sold_count} sold")
-    return {"new": new_count, "sold": sold_count, "total": len(found_ids)}
-
-
-def _parse_card(card) -> Optional[dict]:
+def _parse_listing_from_link(link_tag: Tag) -> Optional[dict]:
+    """
+    Link-first parser — same approach as AutoTraderScraper._parse_listing_from_link.
+    Walk up from a /car-details/ anchor to collect the surrounding card's data.
+    """
     try:
-        link = card.select_one("a[href*='/car-details/']")
-        if not link:
-            return None
-        href = link["href"]
+        href = link_tag.get("href", "")
         url = BASE_URL + href if href.startswith("/") else href
         m = re.search(r"/car-details/(\d+)", url)
         if not m:
             return None
         listing_id = m.group(1)
 
-        title_el = card.select_one("h3, h2, .listing-title, [data-testid='search-listing-title']")
-        title = title_el.get_text(strip=True) if title_el else ""
+        # Walk up to the nearest meaningful container
+        container: Tag = link_tag
+        for _ in range(8):
+            p = container.parent
+            if p is None:
+                break
+            container = p
+            if container.name in ("li", "article", "section"):
+                break
 
-        price_el = card.select_one("[data-testid='search-listing-price'], .product-card-pricing__price")
-        price = _parse_price(price_el.get_text() if price_el else "")
+        full_text = container.get_text(separator=" ", strip=True)
 
-        specs = " ".join(el.get_text() for el in card.select("li, .product-card-details__spec-item"))
-        mileage = _parse_mileage(specs)
-        year = _parse_year(title)
+        # Title
+        title = ""
+        for heading in container.select("h2, h3, h1, [class*='title'], [class*='Title']"):
+            t = heading.get_text(strip=True)
+            if len(t) > 5:
+                title = t
+                break
+        if not title:
+            title = link_tag.get_text(strip=True)
 
+        year = _parse_year(title) or _parse_year(full_text)
         parts = title.split()
-        make = parts[0] if parts else ""
+        if year:
+            parts = [p for p in parts if p != str(year)]
+        make  = parts[0] if parts else ""
         model = parts[1] if len(parts) > 1 else ""
+
+        # Price
+        price = None
+        for price_el in container.select("[data-testid*='price'], [class*='price'], [class*='Price']"):
+            p = _parse_price(price_el.get_text())
+            if p and 200 < p < 2_000_000:
+                price = p
+                break
+
+        specs_text = " ".join(
+            el.get_text(strip=True)
+            for el in container.select("li, [class*='spec'], [class*='Spec']")
+        ) or full_text
+
+        mileage = _parse_mileage(specs_text)
+
+        fuel_type = ""
+        for ft in ["Plug-in Hybrid", "Hybrid", "Electric", "Diesel", "Petrol"]:
+            if ft.lower() in specs_text.lower():
+                fuel_type = ft
+                break
 
         colour = ""
         cm = re.search(
-            r"\b(black|white|silver|grey|red|blue|green|yellow|orange|brown|purple|gold)\b",
-            title + " " + specs, re.I,
+            r"\b(black|white|silver|grey|gray|red|blue|green|yellow|orange|"
+            r"brown|purple|gold|bronze|pink|cream|burgundy|navy|maroon|beige)\b",
+            full_text, re.I,
         )
         if cm:
             colour = cm.group(0).capitalize()
 
-        fuel_type = ""
-        for ft in ["Petrol", "Diesel", "Electric", "Hybrid"]:
-            if ft.lower() in specs.lower():
-                fuel_type = ft
-                break
-
-        reg_m = re.search(r"\b([A-Z]{2}\d{2}\s?[A-Z]{3}|[A-Z]\d{1,3}\s?[A-Z]{3})\b", title + " " + specs)
+        reg_m = re.search(r"\b([A-Z]{2}\d{2}\s?[A-Z]{3}|[A-Z]\d{1,3}\s?[A-Z]{3})\b",
+                          full_text)
         reg_plate = reg_m.group(0).replace(" ", "") if reg_m else ""
 
         return {
@@ -211,8 +138,147 @@ def _parse_card(card) -> Optional[dict]:
             "reg_plate": reg_plate,
         }
     except Exception as e:
-        logger.debug(f"Card parse error: {e}")
+        logger.debug(f"Dealer card parse error: {e}")
         return None
+
+
+async def scrape_dealer(
+    session: AsyncSession,
+    dealer: MonitoredDealer,
+) -> dict:
+    """Scrape a single dealer's current stock and reconcile with DB."""
+    import random
+    ua = random.choice(USER_AGENTS)
+
+    found_ids: set[str] = set()
+    new_count = 0
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=settings.headless,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled",
+                  "--disable-dev-shm-usage"],
+        )
+        ctx = await browser.new_context(
+            user_agent=ua,
+            viewport={"width": 1366, "height": 768},
+            locale="en-GB",
+            timezone_id="Europe/London",
+        )
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
+        )
+
+        try:
+            dealer_id = dealer.autotrader_dealer_id or _extract_dealer_id(dealer.autotrader_url or "")
+            if dealer_id:
+                base_search = (
+                    f"{BASE_URL}/car-search"
+                    f"?advertising-location=at_profile_dealer"
+                    f"&dealer-id={dealer_id}"
+                )
+            elif dealer.autotrader_url:
+                base_search = dealer.autotrader_url
+            else:
+                logger.warning(f"No URL or ID for dealer '{dealer.name}'")
+                return {"new": 0, "sold": 0, "total": 0}
+
+            page_num = 1
+            while page_num <= 20:
+                url = f"{base_search}&page={page_num}"
+                page = await ctx.new_page()
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+                    # Accept cookies on first page
+                    if page_num == 1:
+                        try:
+                            for sel in [
+                                "#onetrust-accept-btn-handler",
+                                "button:has-text('Accept all')",
+                                "button:has-text('Accept All')",
+                            ]:
+                                btn = page.locator(sel)
+                                if await btn.count() > 0:
+                                    await btn.first.click()
+                                    await asyncio.sleep(1)
+                                    break
+                        except Exception:
+                            pass
+
+                    # Wait for at least one listing link
+                    try:
+                        await page.wait_for_selector(
+                            "a[href*='/car-details/']", timeout=10000
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)
+
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "lxml")
+
+                    # Link-first: find every /car-details/ anchor, deduplicate by ID
+                    all_links = soup.select("a[href*='/car-details/']")
+                    seen_on_page: set[str] = set()
+                    page_listings = []
+                    for link in all_links:
+                        href = link.get("href", "")
+                        m = re.search(r"/car-details/(\d+)", href)
+                        if not m or m.group(1) in seen_on_page:
+                            continue
+                        seen_on_page.add(m.group(1))
+                        listing = _parse_listing_from_link(link)
+                        if listing:
+                            page_listings.append(listing)
+
+                    if not page_listings:
+                        snippet = soup.get_text(separator=" ", strip=True)[:300]
+                        logger.warning(
+                            f"Dealer '{dealer.name}' page {page_num}: 0 listings found. "
+                            f"Snippet: {snippet}"
+                        )
+                        break
+
+                    logger.info(
+                        f"Dealer '{dealer.name}' page {page_num}: "
+                        f"{len(page_listings)} listings found"
+                    )
+
+                    for listing in page_listings:
+                        found_ids.add(listing["listing_id"])
+                        n = await _upsert_dealer_listing(session, dealer.id, listing)
+                        if n:
+                            new_count += 1
+
+                    next_btn = soup.select_one(
+                        "a[data-testid='pagination-next'], a[aria-label='Next page'], a[aria-label='next']"
+                    )
+                    if not next_btn:
+                        break
+                    page_num += 1
+                    await asyncio.sleep(settings.request_delay_seconds)
+
+                finally:
+                    await page.close()
+
+        except Exception as e:
+            logger.error(f"Dealer scrape error for '{dealer.name}': {e}", exc_info=True)
+        finally:
+            await ctx.close()
+            await browser.close()
+
+    sold_count = await _mark_dealer_sold(session, dealer.id, found_ids)
+
+    dealer.last_scraped = datetime.utcnow()
+    dealer.total_stock = len(found_ids)
+    await session.commit()
+
+    logger.info(
+        f"Dealer '{dealer.name}': {len(found_ids)} live, "
+        f"{new_count} new, {sold_count} sold"
+    )
+    return {"new": new_count, "sold": sold_count, "total": len(found_ids)}
 
 
 async def _upsert_dealer_listing(
@@ -238,7 +304,7 @@ async def _upsert_dealer_listing(
             existing.price = data["price"]
         return False
 
-    listing = DealerListing(
+    session.add(DealerListing(
         dealer_id=dealer_id,
         listing_id=data["listing_id"],
         url=data["url"],
@@ -254,8 +320,7 @@ async def _upsert_dealer_listing(
         first_seen=datetime.utcnow(),
         last_seen=datetime.utcnow(),
         is_active=True,
-    )
-    session.add(listing)
+    ))
     return True
 
 
@@ -275,18 +340,15 @@ async def _mark_dealer_sold(
             )
         )
     )
-    stale = result.scalars().all()
     sold_count = 0
     now = datetime.utcnow()
-
-    for listing in stale:
+    for listing in result.scalars().all():
         if listing.listing_id not in seen_ids:
             listing.is_active = False
             listing.sold_at = now
             if listing.first_seen:
                 listing.days_to_sell = (now - listing.first_seen).days
             sold_count += 1
-
     return sold_count
 
 
@@ -303,6 +365,6 @@ async def scrape_all_dealers(session: AsyncSession) -> dict:
         totals["new"] += stats["new"]
         totals["sold"] += stats["sold"]
         totals["total_stock"] += stats["total"]
-        await asyncio.sleep(5)  # polite gap between dealers
+        await asyncio.sleep(5)
 
     return totals
