@@ -222,6 +222,7 @@ def _ser_dealer(d: MonitoredDealer) -> dict:
 
 
 def _ser_listing(l: DealerListing) -> dict:
+    from database.observations import observation_status
     return {
         "id": l.id,
         "listing_id": l.listing_id,
@@ -239,4 +240,6 @@ def _ser_listing(l: DealerListing) -> dict:
         "sold_at": l.sold_at.isoformat() if l.sold_at else None,
         "days_to_sell": l.days_to_sell,
         "is_active": l.is_active,
+        "observation_status": observation_status(l),
+        "last_seen": l.last_seen.isoformat() if l.last_seen else None,
     }

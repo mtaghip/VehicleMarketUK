@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from dataclasses import dataclass
+from statistics import median
 
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ class DemandSignal:
     sold_last_7d: int
     sold_last_30d: int
     avg_price: Optional[int]
+    median_price: Optional[int]
     demand_score: float         # 0-100 composite
     spike_detected: bool        # True if new listings jumped > 50% vs prior week
     avg_days_to_sell: Optional[float]
@@ -43,6 +45,11 @@ async def compute_demand_signals(
         select(Listing).where(Listing.is_active == True)
     )
     active = active_result.scalars().all()
+
+    discovered_result = await session.execute(
+        select(Listing).where(Listing.first_seen >= d14)
+    )
+    discovered = discovered_result.scalars().all()
 
     # Fetch sold in last 30d
     sold_result = await session.execute(
@@ -69,7 +76,11 @@ async def compute_demand_signals(
         key = ((l.make or "").lower(), (l.model or "").lower())
         sold_by_mm[key].append(l)
 
-    all_keys = set(active_by_mm.keys()) | set(sold_by_mm.keys())
+    discovered_by_mm = defaultdict(list)
+    for listing in discovered:
+        discovered_by_mm[((listing.make or "").lower(), (listing.model or "").lower())].append(listing)
+
+    all_keys = set(active_by_mm) | set(sold_by_mm) | set(discovered_by_mm)
     signals = []
 
     for (mk, mdl) in all_keys:
@@ -79,9 +90,10 @@ async def compute_demand_signals(
         if len(active_items) < min_active and not sold_items:
             continue
 
-        new_24h = sum(1 for l in active_items if l.first_seen and l.first_seen >= h24)
-        new_7d = sum(1 for l in active_items if l.first_seen and l.first_seen >= d7)
-        new_prev_7d = sum(1 for l in active_items if l.first_seen and d14 <= l.first_seen < d7)
+        discoveries = discovered_by_mm.get((mk, mdl), [])
+        new_24h = sum(1 for l in discoveries if l.first_seen and l.first_seen >= h24)
+        new_7d = sum(1 for l in discoveries if l.first_seen and l.first_seen >= d7)
+        new_prev_7d = sum(1 for l in discoveries if l.first_seen and d14 <= l.first_seen < d7)
         sold_7d = sum(1 for l in sold_items if l.sold_at and l.sold_at >= d7)
         sold_30d_count = len(sold_items)
 
@@ -99,10 +111,10 @@ async def compute_demand_signals(
         ) or (new_7d >= 5 and new_prev_7d == 0)
 
         # Demand score: weighted composite
-        velocity_score = max(0, 50 - (avg_dts or 50)) if avg_dts else 25
+        velocity_score = max(0, 50 - avg_dts) if avg_dts is not None else 0
         volume_score = min(30, sold_30d_count * 3)
-        spike_bonus = 20 if spike else 0
-        demand_score = min(100, velocity_score + volume_score + spike_bonus)
+        # New supply is not evidence of buyer demand.
+        demand_score = min(100, velocity_score + volume_score)
 
         year_band = _modal_year_band([l.year for l in active_items if l.year])
 
@@ -116,9 +128,10 @@ async def compute_demand_signals(
             sold_last_7d=sold_7d,
             sold_last_30d=sold_30d_count,
             avg_price=avg_price,
+            median_price=int(median(prices)) if prices else None,
             demand_score=round(demand_score, 1),
             spike_detected=spike,
-            avg_days_to_sell=round(avg_dts, 1) if avg_dts else None,
+            avg_days_to_sell=round(avg_dts, 1) if avg_dts is not None else None,
         ))
 
     signals.sort(key=lambda s: s.demand_score, reverse=True)
@@ -141,7 +154,7 @@ async def save_demand_snapshot(session: AsyncSession):
             sold_this_week=s.sold_last_7d,
             avg_days_to_sell=s.avg_days_to_sell,
             avg_price=s.avg_price,
-            median_price=s.avg_price,
+            median_price=s.median_price,
         )
         session.add(snap)
 

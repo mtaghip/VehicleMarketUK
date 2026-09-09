@@ -73,9 +73,16 @@ async def get_price_insights(
             )
         )
     )
-    old_prices = [ph.price for ph in old_result.scalars().all() if ph.price]
-    old_avg = int(sum(old_prices) / len(old_prices)) if old_prices else None
-    trend_pct = round((avg - old_avg) / old_avg * 100, 1) if old_avg else None
+    # Compare the same cohort, with one latest price per listing at the cutoff.
+    baseline = {}
+    for ph in old_result.scalars().all():
+        if ph.price and (ph.listing_id not in baseline or
+                         (ph.recorded_at, ph.id) > (baseline[ph.listing_id].recorded_at, baseline[ph.listing_id].id)):
+            baseline[ph.listing_id] = ph
+    paired = [listing for listing in listings if listing.id in baseline]
+    old_total = sum(baseline[listing.id].price for listing in paired)
+    current_total = sum(listing.price for listing in paired)
+    trend_pct = round((current_total - old_total) / old_total * 100, 1) if old_total else None
 
     # Underpriced = below 15th percentile
     idx_15 = max(0, int(n * 0.15))

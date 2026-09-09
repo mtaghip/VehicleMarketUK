@@ -20,11 +20,16 @@ async def live_stats(session: AsyncSession = Depends(get_db)):
     active_count = await session.scalar(
         select(func.count()).where(Listing.is_active == True)
     ) or 0
+    unverified_count = await session.scalar(
+        select(func.count()).where(
+            Listing.is_active == True, Listing.last_seen < h24,
+        )
+    ) or 0
 
     # New in last 24h
     new_24h = await session.scalar(
         select(func.count()).where(
-            and_(Listing.is_active == True, Listing.first_seen >= h24)
+            Listing.first_seen >= h24
         )
     ) or 0
 
@@ -40,6 +45,7 @@ async def live_stats(session: AsyncSession = Depends(get_db)):
     avg_dts_result = await session.execute(
         select(func.avg(Listing.days_to_sell)).where(
             and_(
+                Listing.is_active == False,
                 Listing.days_to_sell.isnot(None),
                 Listing.sold_at >= d30,
             )
@@ -77,9 +83,12 @@ async def live_stats(session: AsyncSession = Depends(get_db)):
     return {
         "timestamp": now.isoformat(),
         "active_listings": active_count,
+        "unverified_listings": unverified_count,
+        "sales_basis": "historical_disappearance_inference",
+        "new_listings_basis": "first_observed",
         "new_last_24h": new_24h,
         "sold_last_7d": sold_7d,
-        "avg_days_to_sell": round(avg_dts, 1) if avg_dts else None,
+        "avg_days_to_sell": round(avg_dts, 1) if avg_dts is not None else None,
         "scrapers": {
             "autotrader": _ser_run(at_run),
             "carandclassic": _ser_run(cc_run),
@@ -152,4 +161,8 @@ def _ser_run(r) -> dict:
         "listings_new": r.listings_new,
         "listings_sold": r.listings_sold,
         "success": r.success,
+        "status": "running" if not r.finished_at else ("ok" if r.success else "failed"),
+        "listings_found": r.listings_found,
+        "error": r.error,
+        "coverage": "discovery_only",
     }

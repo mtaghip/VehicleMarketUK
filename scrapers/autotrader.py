@@ -196,7 +196,9 @@ class AutoTraderScraper(BaseScraper):
         listings = []
         has_next = False
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            if response is None or response.status >= 400:
+                raise RuntimeError("Listing page request failed")
 
             # Accept cookies first
             try:
@@ -250,10 +252,13 @@ class AutoTraderScraper(BaseScraper):
                 "a[aria-label='Next page'], "
                 "a[aria-label='next']"
             )
+            if not listings:
+                raise RuntimeError("No valid listings; empty or blocked page requires verification")
             has_next = next_btn is not None
 
         except Exception as e:
             logger.warning(f"AutoTrader page error ({url}): {e}")
+            raise
         finally:
             await page.close()
         return listings, has_next
