@@ -62,7 +62,7 @@ async def upsert_listing(session: AsyncSession, raw: RawListing) -> tuple[str, L
         return "new", listing
 
     # Update existing
-    changed = False
+    changed = not existing.is_active or existing.sold_at is not None
     if raw.price and raw.price != existing.price:
         existing.price = raw.price
         session.add(PriceHistory(listing_id=existing.id, price=raw.price, recorded_at=raw.scraped_at))
@@ -70,6 +70,8 @@ async def upsert_listing(session: AsyncSession, raw: RawListing) -> tuple[str, L
 
     existing.last_seen = raw.scraped_at
     existing.is_active = True
+    existing.sold_at = None
+    existing.days_to_sell = None
 
     # Fill in missing fields if we now have them
     for attr in ("colour", "mileage", "variant", "location", "postcode", "reg_plate"):
@@ -86,42 +88,8 @@ async def mark_sold_listings(
     seen_ids: set[str],
     cutoff_minutes: int = 120,
 ) -> int:
-    """
-    Any listing from `source` that was NOT in this scrape run and hasn't been
-    seen recently is marked as sold. Returns count of newly-sold listings.
-    """
-    from datetime import timedelta
-
-    source_enum = Source(source)
-    cutoff = datetime.utcnow() - timedelta(minutes=cutoff_minutes)
-
-    result = await session.execute(
-        select(Listing).where(
-            and_(
-                Listing.source == source_enum,
-                Listing.is_active == True,
-                Listing.last_seen < cutoff,
-            )
-        )
-    )
-    stale = result.scalars().all()
-    sold_count = 0
-    now = datetime.utcnow()
-
-    for listing in stale:
-        if listing.listing_id not in seen_ids:
-            listing.is_active = False
-            listing.sold_at = now
-            if listing.first_seen:
-                delta = now - listing.first_seen
-                listing.days_to_sell = delta.days
-            sold_count += 1
-            logger.info(
-                f"Marked sold: {listing.make} {listing.model} {listing.year} "
-                f"£{listing.price} (was live {listing.days_to_sell}d)"
-            )
-
-    return sold_count
+    """Compatibility guard: search absence is not evidence of a sale."""
+    return 0
 
 
 async def run_ingestion(
@@ -130,14 +98,20 @@ async def run_ingestion(
     source: str,
 ) -> ScraperRun:
     """Full ingestion pipeline for one scraper run."""
-    run = ScraperRun(source=Source(source), started_at=datetime.utcnow())
+    started_at = datetime.utcnow()
+    run = ScraperRun(source=Source(source), started_at=started_at)
     session.add(run)
+    await session.flush()  # Initialise SQLAlchemy counter defaults.
 
     seen_ids: set[str] = set()
     new_count = updated_count = 0
 
     try:
         async for raw in raw_listings:
+            if raw.source != source:
+                raise ValueError("Listing source does not match ingestion source")
+            if raw.listing_id in seen_ids:
+                continue
             status, _ = await upsert_listing(session, raw)
             seen_ids.add(raw.listing_id)
             if status == "new":
@@ -147,10 +121,21 @@ async def run_ingestion(
             run.listings_found += 1
 
             if run.listings_found % 50 == 0:
-                await session.commit()
+                await session.flush()
                 logger.info(f"{source}: {run.listings_found} listings processed...")
 
-        sold_count = await mark_sold_listings(session, source, seen_ids)
+        if not seen_ids:
+            raise ValueError("No listings collected; coverage could not be verified")
+        previous = await session.scalar(
+            select(ScraperRun).where(
+                ScraperRun.source == Source(source),
+                ScraperRun.success == True,
+                ScraperRun.id != run.id,
+            ).order_by(ScraperRun.started_at.desc()).limit(1)
+        )
+        if previous and previous.listings_found >= 20 and len(seen_ids) < previous.listings_found * 0.5:
+            raise ValueError("Listing count dropped by more than 50%; coverage requires verification")
+        sold_count = 0  # Partial discovery runs cannot establish sales.
 
         run.listings_new = new_count
         run.listings_updated = updated_count
@@ -163,6 +148,13 @@ async def run_ingestion(
         )
 
     except Exception as e:
+        await session.rollback()
+        # Rollback may expire the run; merge a fresh log without lazy IO.
+        run = await session.merge(ScraperRun(
+            source=Source(source), started_at=started_at,
+            listings_found=len(seen_ids), listings_new=0,
+            listings_updated=0, listings_sold=0,
+        ))
         run.error = str(e)
         run.finished_at = datetime.utcnow()
         run.success = False

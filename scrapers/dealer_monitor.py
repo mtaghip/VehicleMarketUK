@@ -4,7 +4,7 @@ Monitor specific AutoTrader dealer pages to detect sold stock.
 AutoTrader dealer profile pages are public:
   https://www.autotrader.co.uk/dealers/<county>/<town>/<name>-<id>/
 
-We scrape their current listings each cycle and mark any that vanished as sold.
+We scrape observed stock; disappearance from search does not establish a sale.
 """
 import asyncio
 import re
@@ -114,22 +114,28 @@ async def scrape_dealer(
                     )
 
                     if not cards:
-                        break
+                        raise RuntimeError("Dealer page has no verifiable listings")
 
+                    parsed_count = 0
                     for card in cards:
                         listing = _parse_card(card)
                         if not listing:
                             continue
 
+                        parsed_count += 1
                         found_ids.add(listing["listing_id"])
                         n = await _upsert_dealer_listing(session, dealer.id, listing)
                         if n:
                             new_count += 1
 
+                    if not parsed_count:
+                        raise RuntimeError("Dealer cards could not be parsed")
                     # Next page?
                     next_btn = soup.select_one("a[data-testid='pagination-next'], a[aria-label='Next page']")
                     if not next_btn:
                         break
+                    if page_num == 20:
+                        raise RuntimeError("Dealer page limit reached; inventory coverage is incomplete")
                     page_num += 1
                     await asyncio.sleep(settings.request_delay_seconds)
 
@@ -138,11 +144,18 @@ async def scrape_dealer(
 
         except Exception as e:
             logger.error(f"Dealer scrape error for {dealer.name}: {e}", exc_info=True)
+            await session.rollback()
+            return {"new": 0, "sold": 0, "total": 0, "success": False, "error": str(e)}
         finally:
             await ctx.close()
             await browser.close()
 
-    # Mark sold: active listings not seen in this run
+    # A large unexpected drop may indicate a changed page or missing pagination.
+    if dealer.total_stock >= 20 and len(found_ids) < dealer.total_stock * 0.5:
+        await session.rollback()
+        return {"new": 0, "sold": 0, "total": 0, "success": False,
+                "error": "Dealer stock dropped by more than 50%; coverage requires verification"}
+    # Discovery only: absent listings remain unverified.
     sold_count = await _mark_dealer_sold(session, dealer.id, found_ids)
 
     # Update dealer metadata
@@ -151,7 +164,7 @@ async def scrape_dealer(
     await session.commit()
 
     logger.info(f"Dealer '{dealer.name}': {len(found_ids)} live, {new_count} new, {sold_count} sold")
-    return {"new": new_count, "sold": sold_count, "total": len(found_ids)}
+    return {"new": new_count, "sold": sold_count, "total": len(found_ids), "success": True}
 
 
 def _parse_card(card) -> Optional[dict]:
@@ -234,6 +247,8 @@ async def _upsert_dealer_listing(
     if existing:
         existing.last_seen = datetime.utcnow()
         existing.is_active = True
+        existing.sold_at = None
+        existing.days_to_sell = None
         if data.get("price") and data["price"] != existing.price:
             existing.price = data["price"]
         return False
@@ -265,41 +280,25 @@ async def _mark_dealer_sold(
     seen_ids: set[str],
     cutoff_minutes: int = 90,
 ) -> int:
-    cutoff = datetime.utcnow() - timedelta(minutes=cutoff_minutes)
-    result = await session.execute(
-        select(DealerListing).where(
-            and_(
-                DealerListing.dealer_id == dealer_id,
-                DealerListing.is_active == True,
-                DealerListing.last_seen < cutoff,
-            )
-        )
-    )
-    stale = result.scalars().all()
-    sold_count = 0
-    now = datetime.utcnow()
-
-    for listing in stale:
-        if listing.listing_id not in seen_ids:
-            listing.is_active = False
-            listing.sold_at = now
-            if listing.first_seen:
-                listing.days_to_sell = (now - listing.first_seen).days
-            sold_count += 1
-
-    return sold_count
+    """Compatibility guard: search absence is not evidence of a sale."""
+    return 0
 
 
 async def scrape_all_dealers(session: AsyncSession) -> dict:
     """Scrape all active monitored dealers."""
     result = await session.execute(
-        select(MonitoredDealer).where(MonitoredDealer.is_active == True)
+        select(MonitoredDealer.id).where(MonitoredDealer.is_active == True)
     )
-    dealers = result.scalars().all()
-    totals = {"dealers": len(dealers), "new": 0, "sold": 0, "total_stock": 0}
+    dealer_ids = result.scalars().all()
+    totals = {"dealers": len(dealer_ids), "new": 0, "sold": 0, "total_stock": 0, "errors": []}
 
-    for dealer in dealers:
+    for dealer_id in dealer_ids:
+        dealer = await session.get(MonitoredDealer, dealer_id)
+        if dealer is None:
+            continue
         stats = await scrape_dealer(session, dealer)
+        if not stats.get("success", True):
+            totals["errors"].append({"dealer_id": dealer_id, "error": stats["error"]})
         totals["new"] += stats["new"]
         totals["sold"] += stats["sold"]
         totals["total_stock"] += stats["total"]

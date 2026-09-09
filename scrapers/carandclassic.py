@@ -234,7 +234,9 @@ class CarAndClassicScraper(BaseScraper):
         has_next = False
         try:
             # networkidle waits for the JS SPA to finish rendering listings
-            await page.goto(url, wait_until="networkidle", timeout=45000)
+            response = await page.goto(url, wait_until="networkidle", timeout=45000)
+            if response is None or response.status >= 400:
+                raise RuntimeError("Listing page request failed")
 
             # Cookie consent
             try:
@@ -312,10 +314,13 @@ class CarAndClassicScraper(BaseScraper):
                 "a[aria-label='Next'], a[rel='next'], "
                 "[class*='pagination'] a[href*='page='], a[aria-label='next page']"
             )
+            if not listings:
+                raise RuntimeError("No valid listings; empty or blocked page requires verification")
             has_next = next_btn is not None
 
         except Exception as e:
             logger.warning(f"C&C page error ({url}): {e}")
+            raise
         finally:
             await page.close()
         return listings, has_next

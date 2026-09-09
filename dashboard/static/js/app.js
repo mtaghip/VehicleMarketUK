@@ -74,6 +74,7 @@ async function loadDashboard() {
     ]);
 
     document.getElementById('stat-active').textContent = fmt(stats.active_listings);
+    document.getElementById('stat-unverified').textContent = `${fmt(stats.unverified_listings)} not seen in 24h`;
     document.getElementById('stat-new24').textContent = fmt(stats.new_last_24h);
     document.getElementById('stat-sold7').textContent = fmt(stats.sold_last_7d);
     document.getElementById('stat-avg-dts').textContent = stats.avg_days_to_sell ? stats.avg_days_to_sell + 'd' : '—';
@@ -88,7 +89,7 @@ async function loadDashboard() {
       return `<div class="health-card ${ok ? 'ok' : 'warn'}">
         <div class="health-name">${src === 'autotrader' ? 'AutoTrader' : 'Car &amp; Classic'}</div>
         <div class="health-time">${when}</div>
-        <div class="health-stats">${s ? `+${s.listings_new} new · ${s.listings_sold} sold` : 'No data'}</div>
+        <div class="health-stats">${s?.last_run ? `${s.status === 'failed' ? 'Failed — check scraper status' : s.status === 'running' ? 'Running' : 'Discovery scan'} · ${s.listings_found ?? 0} found · +${s.listings_new ?? 0} saved` : 'No data'}</div>
         <div class="health-dot ${ok ? 'green' : 'red'}"></div>
       </div>`;
     }).join('');
@@ -118,7 +119,7 @@ async function loadDashboard() {
     // Activity feed
     document.getElementById('activity-feed').innerHTML = activity.slice(0, 20).map(e => {
       const icon = e.type === 'new' ? '🟢' : '🔴';
-      const label = e.type === 'new' ? 'Listed' : `Sold in ${e.days_to_sell ?? '?'}d`;
+      const label = e.type === 'new' ? 'Discovered' : `Inferred sale after ${e.days_to_sell ?? '?'}d`;
       return `<div class="activity-item">
         <span class="activity-icon">${icon}</span>
         <span class="activity-text"><strong>${e.year || ''} ${e.make || ''} ${e.model || ''}</strong>

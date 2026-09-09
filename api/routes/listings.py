@@ -120,6 +120,7 @@ async def get_listing(listing_id: int, session: AsyncSession = Depends(get_db)):
 
 def _serialize(l: Listing) -> dict:
     from datetime import datetime
+    from database.observations import observation_status
     return {
         "id": l.id,
         "listing_id": l.listing_id,
@@ -142,5 +143,6 @@ def _serialize(l: Listing) -> dict:
         "sold_at": l.sold_at.isoformat() if l.sold_at else None,
         "days_to_sell": l.days_to_sell,
         "is_active": l.is_active,
+        "observation_status": observation_status(l),
         "days_live": (datetime.utcnow() - l.first_seen).days if l.first_seen and l.is_active else None,
     }

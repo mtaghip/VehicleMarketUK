@@ -35,13 +35,14 @@
         <button class="btn btn-sm" onclick="loadDashboard()">↻ Refresh</button>
       </div>
 
+      <p class="section-desc">Counts cover collected listings, not the entire UK market. New means first discovered. Historical sales are inferred from disappearance and are unverified; discovery scrapes no longer declare sales.</p>
       <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value" id="stat-active">—</div><div class="stat-label">Active Listings</div></div>
-        <div class="stat-card highlight"><div class="stat-value" id="stat-new24">—</div><div class="stat-label">New Today</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-sold7">—</div><div class="stat-label">Sold This Week</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-active">—</div><div class="stat-label">Tracked as Active</div><div id="stat-unverified" class="text-muted"></div></div>
+        <div class="stat-card highlight"><div class="stat-value" id="stat-new24">—</div><div class="stat-label">Discovered (24h)</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-sold7">—</div><div class="stat-label">Inferred Sales (7d)</div></div>
         <div class="stat-card"><div class="stat-value" id="stat-avg-dts">—</div><div class="stat-label">Avg Days to Sell</div></div>
         <div class="stat-card alert-card"><div class="stat-value" id="stat-dealers">—</div><div class="stat-label">Monitored Dealers</div></div>
-        <div class="stat-card gem-card"><div class="stat-value" id="stat-dealer-sold">—</div><div class="stat-label">Dealer Sales (7d)</div></div>
+        <div class="stat-card gem-card"><div class="stat-value" id="stat-dealer-sold">—</div><div class="stat-label">Inferred Dealer Sales (7d)</div></div>
       </div>
 
       <div class="grid-2">
@@ -55,7 +56,7 @@
           </div>
         </div>
         <div class="card">
-          <h2 class="card-title">Demand Spikes 🔥</h2>
+          <h2 class="card-title">Listing Supply Spikes 🔥</h2>
           <div id="spikes-list" class="spike-list"></div>
         </div>
       </div>
@@ -100,7 +101,7 @@
     <!-- ── DEALERS ─────────────────────────────────────── -->
     <section id="section-dealers" class="section">
       <h1 class="section-title">Dealer Stock Monitor</h1>
-      <p class="section-desc">Track any AutoTrader dealer. See which cars they've sold in the last 7 days.</p>
+      <p class="section-desc">Track AutoTrader dealer stock. Historical sales below are unverified disappearance estimates. New scans update observed stock without declaring missing cars sold.</p>
 
       <div class="grid-2">
         <div class="card">
@@ -113,7 +114,7 @@
           </div>
         </div>
         <div class="card">
-          <h2 class="card-title">Sold Leaderboard (last 7 days)</h2>
+          <h2 class="card-title">Historical Inferred Sales (last 7 days)</h2>
           <table class="data-table">
             <thead><tr><th>Dealer</th><th>Sold</th><th>Stock</th><th>Avg £</th><th>Avg Days</th></tr></thead>
             <tbody id="dealer-leaderboard"></tbody>
@@ -129,7 +130,7 @@
 
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
-          <h2 class="card-title" style="margin:0">All Dealer Sold Vehicles</h2>
+          <h2 class="card-title" style="margin:0">Dealer Vehicles Previously Inferred Sold</h2>
           <div class="period-toggle">
             <button class="period-btn active" data-days="7" onclick="setDealerSoldPeriod(7, this)">7 days</button>
             <button class="period-btn" data-days="30" onclick="setDealerSoldPeriod(30, this)">30 days</button>
@@ -143,7 +144,7 @@
     <!-- ── VELOCITY ───────────────────────────────────── -->
     <section id="section-velocity" class="section">
       <h1 class="section-title">Sales Velocity</h1>
-      <p class="section-desc">How fast are different models actually selling?</p>
+      <p class="section-desc">Historical time from first observation to inferred removal. These estimates do not confirm a sale or the original advertising date.</p>
       <div class="filter-bar card">
         <input type="text" id="vel-make" placeholder="Make" class="filter-input">
         <input type="text" id="vel-model" placeholder="Model" class="filter-input">
