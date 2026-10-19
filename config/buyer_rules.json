@@ -1,0 +1,42 @@
+{
+  "_comment": "Edit these to match how you trade. Money is GBP. Re-run `python cli.py pick <file>` after changing anything.",
+
+  "costs": {
+    "vat_registered": true,
+    "resale_pct_of_retail": 0.97,
+    "fixed_costs": 1050,
+    "prep_by_grade": {"1": 300, "2": 450, "3": 750, "4": 1200, "5": 1800},
+    "no_history_service": 300
+  },
+
+  "targets": {
+    "target_profit": 2000,
+    "consider_profit": 1000,
+    "budget_max_buy": null,
+    "min_realistic_bid_pct_of_retail": 0.70
+  },
+
+  "speed": {
+    "tier_a": {"max_days": 30, "min_rating": 80, "min_demand_bar": 55},
+    "tier_b": {"max_days": 35, "min_rating": 70, "min_demand_bar": 50},
+    "tier_c": {"max_days": 45, "min_rating": 50, "min_demand_bar": 0},
+    "buy_requires_tier": ["A", "B", "C"]
+  },
+
+  "hard_rules": {
+    "reject_on_finance": true,
+    "reject_mechanical_issues": true,
+    "max_owners": 3,
+    "max_grade": 3,
+    "max_mileage": 120000
+  },
+
+  "ranking_weights": {
+    "speed": 0.45,
+    "profit": 0.35,
+    "spec": 0.10,
+    "condition": 0.10
+  },
+
+  "max_per_fuel_in_top": 0.5
+}

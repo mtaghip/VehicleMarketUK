@@ -34,6 +34,21 @@ python main.py
 
 SQLite data lives under `data/` locally, or `/data` when that directory exists. This reliability change does not require a schema migration and does not rewrite historical inferred sales. Back up the database before deploying application changes.
 
+## Car buyer (hand-pick cars from an export)
+
+Give it a stock, auction or Auto Trader valuation export (CSV or Excel, extension optional) and it scores every car and shortlists the ones to buy:
+
+```sh
+python cli.py pick path/to/export.csv --top 10            # defaults from config/buyer_rules.json
+python cli.py pick stock.xlsx --budget 12000 --no-vat     # per-car budget, not VAT-registered
+```
+
+For each car it works out speed tier A–D from average days to sell, retail rating and demand bar %; net profit at reserve after prep, fees and margin-scheme VAT; the **max bid** that still hits the target profit; and a spec score. Cars are skipped for finance, declared mechanical issues, too many owners, poor grade, high mileage, reserve at or above retail, identity mismatches, and red flags in the seller's notes such as write-off markers or leased batteries. Results go to `data/picks/` as a CSV of every car with reasons, a shortlist CSV and an HTML report.
+
+Change costs, VAT status, target profit and thresholds in `config/buyer_rules.json`. In Claude Code, the `car-buyer` skill (`.claude/skills/car-buyer/SKILL.md`) runs the picker on an uploaded file and then reviews each shortlisted car's seller notes by hand before reporting.
+
+Files without a reserve price (for example the Auto Trader demand CSV) get a max bid only; BUY then means worth buying at or below that bid. Values are snapshots and the picker never replaces an inspection, HPI check or test drive.
+
 ## Tests
 
 The focused regression tests use an in-memory SQLite database and mocked browser pages; no website scraping, browser download, credentials, or live database is required.
