@@ -36,15 +36,25 @@ ALIASES: dict[str, list[str]] = {
     "mech_notes": ["Additional mechanical information"],
     "reserve": ["reserve", "Reserve price", "Reserve GBP", "Reserve"],
     "cap_clean": ["capClean", "CAP clean value"],
-    "retail": ["retail", "AT retail GBP", "AT retail"],
-    "avg_days": ["avgDays", "AT average days"],
-    "rating": ["retailRating", "AT retail rating"],
-    "demand_label": ["demandLabel", "Market condition"],
+    "retail": ["retail", "AT retail GBP", "AT retail", "Retail value"],
+    "avg_days": ["avgDays", "AT average days", "Days to sell"],
+    "rating": ["retailRating", "AT retail rating", "AT rating"],
+    "demand_label": ["demandLabel", "Market condition", "Demand"],
     "demand_bar": ["demandBarPct", "Demand bar position %", "Demand bar %"],
     "status": ["status", "Check status"],
     "error": ["error"],
     "portal_vehicle": ["portalVehicle", "Portal vehicle"],
     "link": ["Motorway vehicle link", "portalUrl", "Portal URL"],
+}
+
+# Typical demand bar % for each Auto Trader demand label (averages from the 8 Oct 2026 Motorway check),
+# used when a file only gives the label.
+LABEL_TO_BAR = {
+    "higher demand than normal": 60.0,
+    "lower supply than normal": 63.0,
+    "balanced market": 50.0,
+    "higher supply than normal": 42.0,
+    "lower demand than normal": 40.0,
 }
 
 NUMERIC = ["year", "mileage", "owners", "grade", "reserve", "cap_clean", "retail", "avg_days", "rating", "demand_bar"]
@@ -91,6 +101,9 @@ def normalise(df: pd.DataFrame) -> pd.DataFrame:
     bar = out["demand_bar"].dropna()
     if len(bar) and bar.max() <= 1.0:
         out["demand_bar"] = out["demand_bar"] * 100
+    estimate = out["demand_label"].astype("string").str.strip().str.lower().map(LABEL_TO_BAR)
+    out["demand_bar_estimated"] = out["demand_bar"].isna() & estimate.notna()
+    out["demand_bar"] = out["demand_bar"].fillna(estimate)
 
     for col in ["on_finance", "mech_issues"]:
         out[col] = out[col].astype("string").str.strip().str.lower().isin(["yes", "true", "y", "1"])

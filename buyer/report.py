@@ -12,7 +12,7 @@ CSV_COLUMNS = [
     "verdict", "score", "tier", "quick_sell", "vrm", "make", "model", "year", "mileage", "owners",
     "service_history", "grade", "fuel", "location", "reserve", "retail", "resale", "costs", "vat",
     "net_at_reserve", "max_bid", "bid_headroom", "roi_pct", "avg_days", "rating", "demand_bar",
-    "demand_label", "spec", "hard_fails", "warnings", "link",
+    "demand_bar_estimated", "demand_label", "spec", "hard_fails", "warnings", "link",
 ]
 
 
@@ -22,6 +22,14 @@ def _money(v) -> str:
 
 def _num(v, fmt="{:,.0f}") -> str:
     return "—" if pd.isna(v) else fmt.format(v)
+
+
+def _details(r: pd.Series) -> str:
+    parts = [f"{r['mileage']:,.0f} mi" if pd.notna(r["mileage"]) else None,
+             f"{r['owners']:.0f} owners" if pd.notna(r["owners"]) else None,
+             f"grade {r['grade']:.0f}" if pd.notna(r["grade"]) else None,
+             f"{r['service_history']} history" if pd.notna(r["service_history"]) else None]
+    return " · ".join(p for p in parts if p)
 
 
 def _flat(df: pd.DataFrame) -> pd.DataFrame:
@@ -72,7 +80,8 @@ def _html(scored: pd.DataFrame, shortlist: pd.DataFrame, source_name: str, rules
     verdicts = scored["verdict"].value_counts()
     rows = []
     for i, r in shortlist.iterrows():
-        car = f"{html.escape(str(r['make']))} {html.escape(str(r['model']))} {_num(r['year'], '{:.0f}')}"
+        name = " ".join(str(v) for v in (r["make"], r["model"]) if pd.notna(v)) or "Details on listing"
+        car = f"{html.escape(name)} {_num(r['year'], '{:.0f}') if pd.notna(r['year']) else ''}".strip()
         if pd.notna(r["link"]):
             car = f'<a href="{html.escape(str(r["link"]))}" target="_blank" rel="noopener">{car}</a>'
         warns = "".join(f"<li>{html.escape(w)}</li>" for w in r["warnings"]) or "<li>None</li>"
@@ -80,13 +89,13 @@ def _html(scored: pd.DataFrame, shortlist: pd.DataFrame, source_name: str, rules
         <tr>
           <td class="n">{i + 1}</td>
           <td><span class="pill {r['verdict'].lower()}">{r['verdict']}</span></td>
-          <td><b>{html.escape(str(r['vrm']))}</b><br>{car}<div class="sub">{_num(r['mileage'])} mi · {_num(r['owners'], '{:.0f}')} owners · grade {_num(r['grade'], '{:.0f}')} · {html.escape(str(r['service_history']))}</div></td>
+          <td><b>{html.escape(str(r['vrm']))}</b><br>{car}<div class="sub">{html.escape(_details(r))}</div></td>
           <td class="n">{_money(r['reserve'])}</td>
           <td class="n"><b>{_money(r['max_bid'])}</b></td>
           <td class="n">{_money(r['net_at_reserve'])}</td>
           <td class="n">{_num(r['avg_days'])}</td>
           <td class="n">{_num(r['rating'])}</td>
-          <td class="n">{_num(r['demand_bar'], '{:.0f}%')}</td>
+          <td class="n">{'~' if r.get('demand_bar_estimated', False) else ''}{_num(r['demand_bar'], '{:.0f}%')}</td>
           <td class="n">{r['tier']}</td>
           <td><ul>{warns}</ul></td>
         </tr>""")
@@ -116,5 +125,7 @@ ul{{margin:0;padding-left:16px;font-size:12px;color:var(--ink2)}} a{{color:inher
 <tbody>{''.join(rows) or '<tr><td colspan="11">No car passed the rules. Loosen config/buyer_rules.json or try another file.</td></tr>'}</tbody></table></div>
 <div class="p"><b>Why cars were skipped</b><ul>{skips}</ul></div>
 {'<p class="sub"><b>This file has no reserve prices.</b> BUY means worth buying at or below the max bid.</p>' if scored['reserve'].isna().all() else ''}
+{'<p class="sub"><b>This file has no make, model, condition or finance details.</b> Check each listing before bidding.</p>' if scored['make'].isna().all() else ''}
+{'<p class="sub">~ = demand bar estimated from the demand label.</p>' if scored['demand_bar_estimated'].any() else ''}
 <p class="sub">Max bid = highest price that still makes the target profit after costs{' and margin-scheme VAT' if 'VAT' in rules_summary else ''}. Reserve and retail are snapshots, not guaranteed prices. Inspect, HPI-check and test-drive every car.</p>
 </div></body></html>"""

@@ -115,16 +115,20 @@ def cmd_pick(args):
     print(f"\n{len(cars)} cars loaded · {summary}")
     if cars["reserve"].isna().all():
         print("No reserve/buy price in this file: BUY means worth buying at or below the max bid shown.")
+    if cars["make"].isna().all():
+        print("No make/model, condition or finance details in this file: check each listing before bidding.")
+    if cars["demand_bar_estimated"].any():
+        print("Demand bar estimated from the demand label (~) where the file has no bar %.")
     print(scored["verdict"].value_counts().to_string())
     print(f"\n{'#':>2} {'Verdict':<8} {'VRM':<9} {'Car':<38} {'Reserve':>9} {'Max bid':>9} {'Net':>7} "
           f"{'Days':>5} {'Rate':>5} {'Bar':>4} Tier")
     for i, r in shortlist.iterrows():
-        car = f"{r['make']} {r['model']}"[:38]
+        car = (" ".join(str(v) for v in (r["make"], r["model"]) if pd.notna(v)) or "(see listing)")[:38]
         money = lambda v: "—" if pd.isna(v) else f"£{v:,.0f}"
         num = lambda v: "—" if pd.isna(v) else f"{v:.0f}"
         print(f"{i + 1:>2} {r['verdict']:<8} {r['vrm']:<9} {car:<38} {money(r['reserve']):>9} "
               f"{money(r['max_bid']):>9} {money(r['net_at_reserve']):>7} {num(r['avg_days']):>5} "
-              f"{num(r['rating']):>5} {num(r['demand_bar']):>4} {r['tier']}")
+              f"{num(r['rating']):>5} {('~' if r['demand_bar_estimated'] else '') + num(r['demand_bar']):>4} {r['tier']}")
         for w in r["warnings"]:
             print(f"{'':>12}⚠ {w}")
     paths = write_reports(scored, shortlist, args.out, source_name=args.file, rules_summary=summary)

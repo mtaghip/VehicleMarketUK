@@ -118,7 +118,8 @@ def _economics(df: pd.DataFrame, rules: Rules) -> pd.DataFrame:
     vat_factor = 1 - (1 / 6 if c["vat_registered"] else 0)
     prep = df["grade"].map(lambda g: c["prep_by_grade"].get(str(int(g)), c["prep_by_grade"]["5"]) if pd.notna(g)
                            else c["prep_by_grade"]["3"])
-    no_history = df["service_history"].isna() | df["service_history"].str.lower().isin(["none", "nan", ""])
+    # Only charge for a service when the seller says there is no history; a blank field just means unknown.
+    no_history = df["service_history"].str.strip().str.lower().eq("none").fillna(False).astype(bool)
     df["resale"] = (df["retail"] * c["resale_pct_of_retail"]).round(-1)
     df["costs"] = c["fixed_costs"] + prep + np.where(no_history, c["no_history_service"], 0)
     margin = (df["resale"] - df["reserve"]).clip(lower=0)
@@ -169,7 +170,7 @@ def _assess(row: pd.Series, rules: Rules) -> tuple[list[str], list[str]]:
         warn.append("Older Renault EV - confirm the battery is owned, not leased")
     if _s(row["fuel"]).lower() == "electric":
         warn.append("EV - get a battery health report")
-    if _s(row["service_history"]).lower() in ("none", ""):
+    if _s(row["service_history"]).lower() == "none":
         warn.append("No service history")
 
     if pd.notna(row["reserve"]) and pd.notna(row["retail"]) and row["reserve"] >= row["retail"]:
@@ -233,8 +234,8 @@ def _diversified(candidates: pd.DataFrame, top: int, max_share: float) -> pd.Dat
     cap = max(1, int(np.ceil(top * max_share)))
     picked, per_fuel = [], {}
     for idx, row in candidates.iterrows():
-        fuel = str(row["fuel"])
-        if per_fuel.get(fuel, 0) >= cap:
+        fuel = _s(row["fuel"])
+        if fuel and per_fuel.get(fuel, 0) >= cap:
             continue
         picked.append(idx)
         per_fuel[fuel] = per_fuel.get(fuel, 0) + 1

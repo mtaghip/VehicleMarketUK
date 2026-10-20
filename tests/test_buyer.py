@@ -60,6 +60,27 @@ class EconomicsTests(unittest.TestCase):
         self.assertEqual(r["verdict"], "BUY")
 
 
+    def test_portal_results_format_estimates_demand_bar_from_label(self):
+        cars = normalise(pd.DataFrame([
+            {"VRM": "V17SPE", "Mileage": "70800", "Retail value": "14836", "AT rating": "82",
+             "Days to sell": "32", "Demand": "Lower supply than normal"},
+            {"VRM": "NOBAR1", "Mileage": "5000", "Retail value": "9000", "AT rating": "50",
+             "Days to sell": "40", "Demand": None},
+        ]))
+        self.assertEqual(cars.loc[0, "retail"], 14836)
+        self.assertEqual(cars.loc[0, "demand_bar"], 63)
+        self.assertTrue(cars.loc[0, "demand_bar_estimated"])
+        self.assertTrue(pd.isna(cars.loc[1, "demand_bar"]))
+        self.assertFalse(cars.loc[1, "demand_bar_estimated"])
+
+    def test_blank_service_history_is_unknown_not_none(self):
+        blank = run([car(**{"Service history": ""})]).loc["AB12CDE"]
+        none = run([car(**{"Service history": "None"})]).loc["AB12CDE"]
+        self.assertEqual(none["costs"] - blank["costs"], 300)
+        self.assertNotIn("No service history", blank["warnings"])
+        self.assertIn("No service history", none["warnings"])
+
+
 class RuleTests(unittest.TestCase):
     def test_hard_rejections(self):
         rows = [
