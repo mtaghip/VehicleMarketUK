@@ -34,6 +34,11 @@ ALIASES: dict[str, list[str]] = {
     "extras": ["Additional specifications"],
     "condition_notes": ["Additional condition and damage information"],
     "mech_notes": ["Additional mechanical information"],
+    "mods_cosmetic": ["Cosmetic Modifications"],
+    "mods_mechanical": ["Mechanical Modifications"],
+    "mods_other": ["Other Modifications"],
+    "private_plate": ["Private plate"],
+    "retaining_plate": ["Retaining plate"],
     "reserve": ["reserve", "Reserve price", "Reserve GBP", "Reserve"],
     "cap_clean": ["capClean", "CAP clean value"],
     "retail": ["retail", "AT retail GBP", "AT retail", "Retail value"],
@@ -105,7 +110,7 @@ def normalise(df: pd.DataFrame) -> pd.DataFrame:
     out["demand_bar_estimated"] = out["demand_bar"].isna() & estimate.notna()
     out["demand_bar"] = out["demand_bar"].fillna(estimate)
 
-    for col in ["on_finance", "mech_issues"]:
+    for col in ["on_finance", "mech_issues", "private_plate", "retaining_plate"]:
         out[col] = out[col].astype("string").str.strip().str.lower().isin(["yes", "true", "y", "1"])
     out["vrm"] = out["vrm"].astype("string").str.strip().str.upper()
     out["service_history"] = out["service_history"].astype("string").str.strip()

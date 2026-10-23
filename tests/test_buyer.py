@@ -109,6 +109,24 @@ class RuleTests(unittest.TestCase):
         r = run([car(**{"Additional condition and damage information": notes})]).loc["AB12CDE"]
         self.assertNotIn("Interior damage", r["warnings"])
 
+    def test_modifications_and_retained_plate(self):
+        rows = [car(VRM="REMAP1", **{"Mechanical Modifications": "Ecu - Remap"}),
+                car(VRM="CAMP1", **{"Other Modifications": "Other - basic camper fit out"}),
+                car(VRM="PLATE1", **{"Private plate": "Yes", "Retaining plate": "Yes"})]
+        scored = run(rows)
+        self.assertEqual(scored.loc["REMAP1", "verdict"], "SKIP")
+        self.assertIn("Converted vehicle (camper / accessibility)", scored.loc["CAMP1", "warnings"])
+        self.assertIn("private plate", " ".join(scored.loc["PLATE1", "warnings"]))
+        self.assertEqual(scored.loc["PLATE1", "verdict"], "BUY")
+
+    def test_without_reserves_faster_car_ranks_first(self):
+        rows = [car(VRM="CHEAP1", retail="12000", avgDays="40", retailRating="60", demandBarPct="45"),
+                car(VRM="FAST1", retail="20000", avgDays="18", retailRating="98", demandBarPct="65")]
+        for row in rows:
+            row.pop("reserve")
+        scored, _ = pick(normalise(pd.DataFrame(rows)), Rules.load())
+        self.assertEqual(scored.loc[0, "vrm"], "FAST1")
+
     def test_budget_and_slow_cars(self):
         rows = [car(VRM="DEAR1", reserve="30000", retail="40000"),
                 car(VRM="SLOW1", avgDays="70", retailRating="10", demandBarPct="30")]

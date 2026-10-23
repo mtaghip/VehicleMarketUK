@@ -57,6 +57,8 @@ NOTE_FLAGS = [
     (r"smoke|knock|rattle|noise", "Noise/smoke mentioned", False),
     (r"key remote not working|one key|single key|no spare key", "Key issue", False),
     (r"rips, tears or burns|(?<!un)damaged steering wheel", "Interior damage", False),
+    (r"\bremap|\btune[ds]?\b|\btuned\b|stage [123]\b", "Engine remapped / tuned", True),
+    (r"camper|wheelchair|disability|conver(ted|sion)", "Converted vehicle (camper / accessibility)", False),
     (r"#name\?", "Seller notes contain a spreadsheet error; check the original listing", False),
 ]
 STOCKING_LOAN = re.compile(r"stocking loan which will be cleared", re.I)
@@ -145,7 +147,7 @@ def _assess(row: pd.Series, rules: Rules) -> tuple[list[str], list[str]]:
     elif pd.isna(row["avg_days"]) or pd.isna(row["rating"]):
         warn.append("No days-to-sell / rating from the portal")
 
-    notes = _text(row, "condition_notes", "mech_notes", "extras")
+    notes = _text(row, "condition_notes", "mech_notes", "extras", "mods_cosmetic", "mods_mechanical", "mods_other")
     if row["on_finance"]:
         if STOCKING_LOAN.search(notes):
             warn.append("Finance is a dealer stocking loan cleared on collection")
@@ -172,6 +174,8 @@ def _assess(row: pd.Series, rules: Rules) -> tuple[list[str], list[str]]:
         warn.append("EV - get a battery health report")
     if _s(row["service_history"]).lower() == "none":
         warn.append("No service history")
+    if row["retaining_plate"]:
+        warn.append("Seller keeps the private plate - the car goes back to its original reg")
 
     if pd.notna(row["reserve"]) and pd.notna(row["retail"]) and row["reserve"] >= row["retail"]:
         hard.append("Reserve at or above retail")
@@ -215,9 +219,13 @@ def pick(cars: pd.DataFrame, rules: Rules | None = None, top: int = 10) -> tuple
     df["warnings"] = [a[1] for a in assessed]
     df["verdict"] = df.apply(lambda r: _verdict(r, rules), axis=1)
 
-    w = rules.ranking_weights
-    # Rank on £ profit when the file has buy prices, otherwise on return at the max bid.
-    profit_basis = df["roi_pct"] if df["reserve"].isna().all() else df["net_at_reserve"]
+    w = dict(rules.ranking_weights)
+    # Without buy prices every car is priced to make the target at its max bid, so profit can't separate them:
+    # rank on speed instead (return at the max bid would only favour the cheapest cars).
+    no_reserves = df["reserve"].isna().all()
+    if no_reserves:
+        w["speed"], w["profit"] = w["speed"] + w["profit"], 0
+    profit_basis = df["roi_pct"] if no_reserves else df["net_at_reserve"]
     condition = (6 - df["grade"].fillna(3)) - df["warnings"].str.len() * 0.5
     df["score"] = (w["speed"] * _pct_rank(df["quick_sell"]) + w["profit"] * _pct_rank(profit_basis)
                    + w["spec"] * _pct_rank(df["spec"]) + w["condition"] * _pct_rank(condition)) * 100
