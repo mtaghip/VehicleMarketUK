@@ -24,7 +24,7 @@
   },
 
   "hard_rules": {
-    "reject_on_finance": true,
+    "reject_on_finance": false,
     "reject_mechanical_issues": true,
     "max_owners": 3,
     "max_grade": 3,

@@ -84,7 +84,6 @@ class EconomicsTests(unittest.TestCase):
 class RuleTests(unittest.TestCase):
     def test_hard_rejections(self):
         rows = [
-            car(VRM="FIN1", **{"On finance": "Yes"}),
             car(VRM="MECH1", **{"Mechanical issues disclosed by seller": "Yes"}),
             car(VRM="OWN1", **{"Number of owners": "5"}),
             car(VRM="GRADE1", **{"Exterior grade": "5"}),
@@ -94,9 +93,17 @@ class RuleTests(unittest.TestCase):
             car(VRM="CAT1", **{"Additional condition and damage information": "Cat N repaired"}),
         ]
         scored = run(rows)
-        for vrm in ["FIN1", "MECH1", "OWN1", "GRADE1", "RES1", "LEASE1", "CAT1"]:
+        for vrm in ["MECH1", "OWN1", "GRADE1", "RES1", "LEASE1", "CAT1"]:
             self.assertEqual(scored.loc[vrm, "verdict"], "SKIP", vrm)
             self.assertTrue(scored.loc[vrm, "hard_fails"], vrm)
+
+    def test_finance_is_a_warning_unless_rules_reject_it(self):
+        row = car(**{"On finance": "Yes"})
+        allowed = run([row]).loc["AB12CDE"]
+        self.assertEqual(allowed["verdict"], "BUY")
+        self.assertIn("On finance - confirm settlement", allowed["warnings"])
+        rejected = run([row], reject_on_finance=True).loc["AB12CDE"]
+        self.assertEqual(rejected["verdict"], "SKIP")
 
     def test_stocking_loan_finance_is_only_a_warning(self):
         notes = "Finance flag relates to stocking loan which will be cleared upon collection."
